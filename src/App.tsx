@@ -6,7 +6,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Table, Upload } from 'lucide-react';
 import Papa from 'papaparse';
-import { checkConnection } from './lib/supabaseClient';
+import { checkConnection, supabase } from './lib/supabaseClient';
 
 interface AttendanceRecord {
   name: string;
@@ -37,17 +37,26 @@ export default function App() {
   const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
   
   useEffect(() => {
-    checkConnection().then(res => {
-      setDbStatus(res.connected ? 'connected' : 'error');
-    });
+    async function fetchData() {
+      const conn = await checkConnection();
+      setDbStatus(conn.connected ? 'connected' : 'error');
+      
+      if (conn.connected) {
+        const { data, error } = await supabase.from('employees').select('*');
+        if (error) {
+          console.error('Error fetching employees:', error);
+          setDbStatus('error');
+        } else if (data) {
+          setEmployees(data as Employee[]);
+        }
+      }
+    }
+    fetchData();
   }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([
-    { id: '101', name: 'John Doe', designation: 'Engineer', education: 'BSc', category: 'Permanent', salary: '50000', joinDate: '2023-01-01', phoneNumber: '01700000000' },
-    { id: '102', name: 'Jane Smith', designation: 'Manager', education: 'MBA', category: 'Permanent', salary: '70000', joinDate: '2022-05-15', phoneNumber: '01800000000' },
-  ]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [locations, setLocations] = useState<{id: string, name: string}[]>([
     { id: '101', name: 'ETP Project' },
     { id: '102', name: 'Washing Project' },
@@ -312,7 +321,16 @@ export default function App() {
                  <input type="text" placeholder="Salary" value={newEmp.salary} onChange={e => setNewEmp({...newEmp, salary: e.target.value})} className="border border-stone-300 p-2 text-xs" />
                  <input type="date" placeholder="Join Date" value={newEmp.joinDate} onChange={e => setNewEmp({...newEmp, joinDate: e.target.value})} className="border border-stone-300 p-2 text-xs" />
                  <input type="text" placeholder="Phone" value={newEmp.phoneNumber} onChange={e => setNewEmp({...newEmp, phoneNumber: e.target.value})} className="border border-stone-300 p-2 text-xs" />
-                 <button onClick={() => { setEmployees([...employees, newEmp]); setNewEmp({ id: '', name: '', designation: '', education: '', category: '', salary: '', joinDate: '', phoneNumber: '' }); }} className="bg-black text-white text-xs p-2 font-bold uppercase">Add Employee</button>
+                 <button onClick={async () => {
+                    const { error } = await supabase.from('employees').insert([newEmp]);
+                    if (error) {
+                      console.error('Error adding employee:', error);
+                      alert('Error adding employee');
+                    } else {
+                      setEmployees([...employees, newEmp]);
+                      setNewEmp({ id: '', name: '', designation: '', education: '', category: '', salary: '', joinDate: '', phoneNumber: '' });
+                    }
+                 }} className="bg-black text-white text-xs p-2 font-bold uppercase">Add Employee</button>
               </div>
             </div>
 
