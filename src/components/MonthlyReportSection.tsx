@@ -12,6 +12,8 @@ export default function MonthlyReportSection({ employees, attendance }: Props) {
     const daysInMonth = new Date(year, month, 0).getDate();
     const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
+    const todayISO = new Date().toISOString().split('T')[0];
+
     return (
         <section className="bg-white p-8 rounded-lg shadow-sm border border-stone-100">
           <h2 className="text-sm font-bold uppercase tracking-widest text-stone-800 mb-8">Monthly Attendance Report</h2>
@@ -37,9 +39,17 @@ export default function MonthlyReportSection({ employees, attendance }: Props) {
                           {days.map(d => {
                               const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
                               const record = attendance.find(a => a.no === emp.id && a.dateISO === dateISO);
+                              const isFuture = dateISO > todayISO;
+                              
                               return (
                                   <td key={d} className="px-1 py-3 text-center">
-                                      {record ? <span className="text-green-600 font-bold">P</span> : <span className="text-red-400">A</span>}
+                                      {record ? (
+                                          <span className="text-green-600 font-bold">P</span>
+                                      ) : isFuture ? (
+                                          <span className="text-stone-300">-</span>
+                                      ) : (
+                                          <span className="text-red-400">A</span>
+                                      )}
                                   </td>
                               )
                           })}

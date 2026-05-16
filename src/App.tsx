@@ -128,44 +128,79 @@ export default function App() {
             return;
           }
           
-          const attendanceData = [];
+          // First, get all employee IDs for validation
+          const { data: allEmps } = await supabase.from('employees').select('id');
+          const empIdSet = new Set(allEmps?.map(e => e.id) || []);
+
+          // Group by empId and date to find min/max times
+          const groupedData: Record<string, { empId: string, date: string, times: string[], idKey?: string }> = {};
+
           for (let i = 0; i < rawData.length; i++) {
              const rec = rawData[i];
-             const empId = rec.no || rec.ID || rec.id;
-             const dateIso = rec.dateISO || rec.Date || rec.date;
+             const empId = rec['No.'] || rec.no || rec.ID || rec.id;
+             const dateTimeStr = rec['Date/Time'] || rec.dateISO || rec.Date || rec.date;
 
-             const { data: emp, error: empError } = await supabase.from('employees').select('id').eq('id', empId).single();
-             if (!empError && emp) {
-                const sysInTime = rec.sysInTime || rec['In Time'] || rec['In'] || null;
-                const sysOutTime = rec.sysOutTime || rec['Out Time'] || rec['Out'] || null;
-                
-                const record = {
-                  employee_id: empId,
-                  date_iso: dateIso,
-                  sys_in_time: sysInTime,
-                  sys_out_time: sysOutTime,
-                  manual_in_time: sysInTime,
-                  manual_out_time: sysOutTime,
-                  id_number: rec.idKey || rec.idNumber || null,
-                  status: rec.status || 'Present',
-                };
+             if (empId && dateTimeStr && empIdSet.has(empId)) {
+                try {
+                    // Handle "5/1/2026 7:40 AM" format
+                    const dateObj = new Date(dateTimeStr);
+                    if (!isNaN(dateObj.getTime())) {
+                        const dateIso = dateObj.toISOString().split('T')[0];
+                        const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                        const key = `${empId}_${dateIso}`;
 
-                // Check if record exists to decide between insert or update
-                const { data: existing } = await supabase
-                  .from('attendance')
-                  .select('id')
-                  .eq('employee_id', empId)
-                  .eq('date_iso', dateIso)
-                  .single();
-
-                if (existing) {
-                  await supabase.from('attendance').update(record).eq('id', existing.id);
-                } else {
-                  await supabase.from('attendance').insert(record);
+                        if (!groupedData[key]) {
+                            groupedData[key] = {
+                                empId,
+                                date: dateIso,
+                                times: [],
+                                idKey: rec['ID Number'] || rec.idKey || rec.idNumber || null
+                            };
+                        }
+                        groupedData[key].times.push(timeStr);
+                    }
+                } catch (e) {
+                    console.error("Error parsing date:", dateTimeStr, e);
                 }
              }
-             setUploadProgress(Math.round(((i + 1) / rawData.length) * 100));
+
+             if (i % Math.max(1, Math.floor(rawData.length / 10)) === 0) {
+                setUploadProgress(Math.round(((i + 1) / rawData.length) * 40)); 
+             }
           }
+
+          const attendanceData = Object.values(groupedData).map(group => {
+              const sortedTimes = group.times.sort();
+              const inTime = sortedTimes[0];
+              const outTime = sortedTimes.length > 1 ? sortedTimes[sortedTimes.length - 1] : null;
+
+              return {
+                  employee_id: group.empId,
+                  date_iso: group.date,
+                  sys_in_time: inTime,
+                  sys_out_time: outTime,
+                  manual_in_time: inTime,
+                  manual_out_time: outTime,
+                  id_number: group.idKey,
+                  status: 'Present'
+              };
+          });
+
+          // Batch upsert in chunks
+          const chunkSize = 50;
+          for (let i = 0; i < attendanceData.length; i += chunkSize) {
+            const chunk = attendanceData.slice(i, i + chunkSize);
+            const { error: upsertError } = await supabase
+              .from('attendance')
+              .upsert(chunk, { onConflict: 'employee_id,date_iso' });
+            
+            if (upsertError) {
+              console.error('Upsert index error:', upsertError);
+            }
+            
+            setUploadProgress(40 + Math.round(((i + chunk.length) / attendanceData.length) * 60));
+          }
+
           alert('Upload complete!');
           fetchData();
           setUploading(false);
@@ -203,11 +238,20 @@ export default function App() {
         )}
         {activeSection === 'employees' && <EmployeeSection employees={employees} onRefresh={fetchData} />}
         {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees} onUpdateAttendance={async (r) => {
-            const { data: existing } = await supabase.from('attendance').select('id').eq('employee_id', r.empId).eq('date_iso', r.date).single();
-            if (existing) await supabase.from('attendance').update({ manual_in_time: r.inTime, manual_out_time: r.outTime, status: 'Manual' }).eq('id', existing.id);
-            else await supabase.from('attendance').insert({ employee_id: r.empId, date_iso: r.date, manual_in_time: r.inTime, manual_out_time: r.outTime, status: 'Manual' });
-            fetchData();
-            alert('Saved');
+            const { error } = await supabase.from('attendance').upsert({ 
+                employee_id: r.empId, 
+                date_iso: r.date, 
+                manual_in_time: r.inTime, 
+                manual_out_time: r.outTime, 
+                status: 'Manual' 
+            }, { onConflict: 'employee_id,date_iso' });
+            
+            if (error) {
+                alert('Error saving: ' + error.message);
+            } else {
+                fetchData();
+                alert('Saved');
+            }
         }} />}
         {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} progress={uploadProgress} />}
         {activeSection === 'comparison' && <ComparisonSection employees={employees} attendance={attendance} />}
