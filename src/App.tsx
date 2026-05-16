@@ -14,6 +14,7 @@ import AttendanceSection from './components/AttendanceSection';
 import ComparisonSection from './components/ComparisonSection';
 import MonthlyReportSection from './components/MonthlyReportSection';
 import TimeCardSection from './components/TimeCardSection';
+import LocationSection from './components/LocationSection';
 import UploadSection from './components/UploadSection';
 import ManualEntrySection from './components/ManualEntrySection';
 
@@ -237,12 +238,14 @@ export default function App() {
           </div>
         )}
         {activeSection === 'employees' && <EmployeeSection employees={employees} onRefresh={fetchData} />}
-        {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees} onUpdateAttendance={async (r) => {
+        {activeSection === 'locations' && <LocationSection locations={locations} onRefresh={fetchData} />}
+        {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees} locations={locations} onUpdateAttendance={async (r) => {
             const { error } = await supabase.from('attendance').upsert({ 
                 employee_id: r.empId, 
                 date_iso: r.date, 
                 manual_in_time: r.inTime, 
                 manual_out_time: r.outTime, 
+                location_id: r.locationId,
                 status: 'Manual' 
             }, { onConflict: 'employee_id,date_iso' });
             
