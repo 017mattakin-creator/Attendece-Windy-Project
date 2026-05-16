@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Table, Upload } from 'lucide-react';
 import Papa from 'papaparse';
+import { checkConnection } from './lib/supabaseClient';
 
 interface AttendanceRecord {
   name: string;
@@ -33,6 +34,14 @@ interface Employee {
 }
 
 export default function App() {
+  const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
+  
+  useEffect(() => {
+    checkConnection().then(res => {
+      setDbStatus(res.connected ? 'connected' : 'error');
+    });
+  }, []);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([
@@ -243,6 +252,9 @@ export default function App() {
           <p className="text-[10px] uppercase tracking-[0.2em] text-stone-500">Professional Reporting & Analysis Engine</p>
         </div>
         <div className="flex items-center gap-4">
+          <div className={`text-[10px] uppercase font-bold ${dbStatus === 'connected' ? 'text-green-600' : dbStatus === 'error' ? 'text-red-600' : 'text-stone-400'}`}>
+             DB: {dbStatus}
+          </div>
           {showPasswordPrompt ? (
             <div className="flex gap-2">
               <input type="password" placeholder="Admin Password" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} className="bg-white border border-stone-300 p-2 text-xs" />
