@@ -32,10 +32,10 @@ export default function AttendanceSection({ attendance, employees, locations, on
     
     // Create matrix view
     const renderData = employees.map(emp => {
-        const record = attendance.find(a => a.no === emp.id && a.dateISO === filterDate);
+        const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === filterDate);
         return {
             emp,
-            record: record || { manualInTime: '', manualOutTime: '', sysInTime: '', sysOutTime: '' }
+            record: record || { manualInTime: '', manualOutTime: '', sysInTime: '', sysOutTime: '', locationId: '' }
         };
     }).filter(item => filterEmp === '' || item.emp.id === filterEmp);
 

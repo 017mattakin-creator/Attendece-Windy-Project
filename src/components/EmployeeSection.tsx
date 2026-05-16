@@ -22,7 +22,11 @@ export default function EmployeeSection({ employees, onRefresh }: Props) {
 
     const handleAdd = async () => {
         if (!newEmp.id || !newEmp.name) return alert('ID and Name required');
-        const { error } = await supabase.from('employees').insert([newEmp]);
+        const cleaned = {
+            ...newEmp,
+            id: String(newEmp.id).trim()
+        };
+        const { error } = await supabase.from('employees').insert([cleaned]);
         if (error) alert('Error: ' + error.message);
         else {
             setNewEmp({});

@@ -28,7 +28,7 @@ export default function MonthlyReportSection({ employees, attendance }: Props) {
             };
             days.forEach(d => {
                 const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                const record = attendance.find(a => a.no === emp.id && a.dateISO === dateISO);
+                const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
                 const isFuture = dateISO > todayISO;
                 row[`Day ${d}`] = record ? 'P' : (isFuture ? '-' : 'A');
             });
@@ -50,7 +50,7 @@ export default function MonthlyReportSection({ employees, attendance }: Props) {
             const row = [emp.id, emp.name];
             days.forEach(d => {
                 const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                const record = attendance.find(a => a.no === emp.id && a.dateISO === dateISO);
+                const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
                 const isFuture = dateISO > todayISO;
                 row.push(record ? 'P' : (isFuture ? '-' : 'A'));
             });
@@ -117,7 +117,7 @@ export default function MonthlyReportSection({ employees, attendance }: Props) {
                           <td className="px-3 py-3 whitespace-nowrap sticky left-12 bg-white">{emp.name}</td>
                           {days.map(d => {
                               const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                              const record = attendance.find(a => a.no === emp.id && a.dateISO === dateISO);
+                              const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
                               const isFuture = dateISO > todayISO;
                               
                               return (

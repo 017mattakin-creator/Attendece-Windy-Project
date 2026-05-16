@@ -18,7 +18,7 @@ export default function TimeCardSection({ employees, attendance }: Props) {
     const daysInMonth = new Date(year, month, 0).getDate();
     const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-    const empAttendance = attendance.filter(a => a.no === selectedEmpId && 
+    const empAttendance = attendance.filter(a => String(a.no).trim() === String(selectedEmpId).trim() && 
         new Date(a.dateISO).getMonth() + 1 === month && 
         new Date(a.dateISO).getFullYear() === year);
 
