@@ -81,6 +81,7 @@ export default function App() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [searchNo, setSearchNo] = useState('');
+  const [uploading, setUploading] = useState(false);
 
   const handleAdminVerify = () => {
     if (passwordInput === '4957629') {
@@ -159,14 +160,16 @@ export default function App() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      setUploading(true);
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
-        complete: (results) => {
+        complete: async (results) => {
           const rawData = results.data as any[];
           
           if (rawData.length === 0) {
             console.warn("No data parsed from CSV");
+            setUploading(false);
             return;
           }
           
@@ -230,7 +233,28 @@ export default function App() {
           // Sort final grouped records by date, then ID
           grouped.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() || a.no.localeCompare(b.no));
 
-          setAttendance(grouped);
+          // Insert into Supabase
+          const attendanceData = grouped.map(rec => ({
+            employee_id: rec.no,
+            date_iso: rec.dateISO,
+            sys_in_time: rec.sysInTime,
+            sys_out_time: rec.sysOutTime,
+            manual_in_time: rec.manualInTime || null,
+            manual_out_time: rec.manualOutTime || null,
+            location_id: rec.locationId || null,
+            id_number: rec.idNumber,
+            status: rec.status,
+          }));
+
+          const { error } = await supabase.from('attendance').insert(attendanceData);
+          if (error) {
+            console.error('Error inserting attendance:', error);
+            alert('Error inserting attendance data: ' + error.message);
+          } else {
+            alert('Upload complete!');
+            setAttendance(grouped);
+          }
+          setUploading(false);
         }
       });
     }
