@@ -234,17 +234,25 @@ export default function App() {
           grouped.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime() || a.no.localeCompare(b.no));
 
           // Insert into Supabase
-          const attendanceData = grouped.map(rec => ({
-            employee_id: rec.no,
-            date_iso: rec.dateISO,
-            sys_in_time: rec.sysInTime,
-            sys_out_time: rec.sysOutTime,
-            manual_in_time: rec.manualInTime || null,
-            manual_out_time: rec.manualOutTime || null,
-            location_id: rec.locationId || null,
-            id_number: rec.idNumber,
-            status: rec.status,
-          }));
+          const attendanceData = [];
+           for (const rec of grouped) {
+             const { data: emp, error: empError } = await supabase.from('employees').select('id').eq('id', rec.no).single();
+             if (!empError && emp) {
+                attendanceData.push({
+                  employee_id: rec.no,
+                  date_iso: rec.dateISO,
+                  sys_in_time: rec.sysInTime,
+                  sys_out_time: rec.sysOutTime,
+                  manual_in_time: rec.manualInTime || null,
+                  manual_out_time: rec.manualOutTime || null,
+                  location_id: rec.locationId || null,
+                  id_number: rec.idNumber,
+                  status: rec.status,
+                });
+             } else {
+               console.warn(`Skipping attendance for unknown employee: ${rec.no}`);
+             }
+           }
 
           const { error } = await supabase.from('attendance').insert(attendanceData);
           if (error) {
