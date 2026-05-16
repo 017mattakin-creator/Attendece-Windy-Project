@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Papa from 'papaparse';
 
 interface AttendanceRecord {
@@ -70,11 +70,11 @@ export default function AttendanceSection({ attendance, employees, onUpdateAtten
     );
 }
 
-function EditableRow({ item, date, onSave }: { item: any, date: string, onSave: any }) {
+function EditableRow({ item, date, onSave }: { item: any, date: string, onSave: any, key?: any }) {
     const [inTime, setInTime] = useState(item.record.manualInTime || item.record.sysInTime || '');
     const [outTime, setOutTime] = useState(item.record.manualOutTime || item.record.sysOutTime || '');
 
-    React.useEffect(() => {
+    useEffect(() => {
         console.log('EditableRow item record:', item.record);
         setInTime(item.record.manualInTime || item.record.sysInTime || '');
         setOutTime(item.record.manualOutTime || item.record.sysOutTime || '');

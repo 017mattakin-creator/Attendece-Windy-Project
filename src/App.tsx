@@ -95,6 +95,7 @@ export default function App() {
   const [passwordInput, setPasswordInput] = useState('');
   const [locations, setLocations] = useState<{id: string, name: string}[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
 
   const handleAdminVerify = () => {
@@ -115,6 +116,7 @@ export default function App() {
     const file = event.target.files?.[0];
     if (file) {
       setUploading(true);
+      setUploadProgress(0);
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
@@ -127,34 +129,47 @@ export default function App() {
           }
           
           const attendanceData = [];
-          for (const rec of rawData) {
-             const { data: emp, error: empError } = await supabase.from('employees').select('id').eq('id', rec.no || rec.ID || rec.id).single();
+          for (let i = 0; i < rawData.length; i++) {
+             const rec = rawData[i];
+             const empId = rec.no || rec.ID || rec.id;
+             const dateIso = rec.dateISO || rec.Date || rec.date;
+
+             const { data: emp, error: empError } = await supabase.from('employees').select('id').eq('id', empId).single();
              if (!empError && emp) {
                 const sysInTime = rec.sysInTime || rec['In Time'] || rec['In'] || null;
                 const sysOutTime = rec.sysOutTime || rec['Out Time'] || rec['Out'] || null;
-                console.log('Mapping record:', { rec, sysInTime, sysOutTime });
-
-                attendanceData.push({
-                  employee_id: rec.no || rec.ID || rec.id,
-                  date_iso: rec.dateISO || rec.Date || rec.date,
+                
+                const record = {
+                  employee_id: empId,
+                  date_iso: dateIso,
                   sys_in_time: sysInTime,
                   sys_out_time: sysOutTime,
                   manual_in_time: sysInTime,
                   manual_out_time: sysOutTime,
                   id_number: rec.idKey || rec.idNumber || null,
                   status: rec.status || 'Present',
-                });
-             } else {
-                console.log('Skipping record (emp not found or error):', rec, empError);
+                };
+
+                // Check if record exists to decide between insert or update
+                const { data: existing } = await supabase
+                  .from('attendance')
+                  .select('id')
+                  .eq('employee_id', empId)
+                  .eq('date_iso', dateIso)
+                  .single();
+
+                if (existing) {
+                  await supabase.from('attendance').update(record).eq('id', existing.id);
+                } else {
+                  await supabase.from('attendance').insert(record);
+                }
              }
+             setUploadProgress(Math.round(((i + 1) / rawData.length) * 100));
           }
-          const { error } = await supabase.from('attendance').upsert(attendanceData, { onConflict: 'employee_id,date_iso' });
-          if (error) alert('Error: ' + error.message);
-          else {
-              alert('Upload complete!');
-              fetchData();
-          }
+          alert('Upload complete!');
+          fetchData();
           setUploading(false);
+          setUploadProgress(0);
         }
       });
     }
@@ -194,7 +209,7 @@ export default function App() {
             fetchData();
             alert('Saved');
         }} />}
-        {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} />}
+        {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} progress={uploadProgress} />}
         {activeSection === 'comparison' && <ComparisonSection employees={employees} attendance={attendance} />}
         {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} />}
         {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} />}
