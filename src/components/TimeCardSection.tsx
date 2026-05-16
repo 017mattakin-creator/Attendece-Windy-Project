@@ -1,0 +1,77 @@
+import React, { useState } from 'react';
+import { ChevronRight } from 'lucide-react';
+
+interface Props {
+    employees: any[];
+    attendance: any[];
+}
+
+export default function TimeCardSection({ employees, attendance }: Props) {
+    const [selectedEmpId, setSelectedEmpId] = useState('');
+    const [month, setMonth] = useState(new Date().getMonth() + 1);
+    const [year, setYear] = useState(new Date().getFullYear());
+
+    const employee = employees.find(e => e.id === selectedEmpId);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
+    const empAttendance = attendance.filter(a => a.no === selectedEmpId && 
+        new Date(a.dateISO).getMonth() + 1 === month && 
+        new Date(a.dateISO).getFullYear() === year);
+
+    return (
+        <section className="bg-white p-8 rounded-lg shadow-sm border border-stone-100">
+          <h2 className="text-sm font-bold uppercase tracking-widest text-stone-800 mb-8">Time Card</h2>
+          
+          <div className="flex gap-4 mb-8 bg-stone-50 p-4 rounded-md">
+            <select value={selectedEmpId} onChange={e => setSelectedEmpId(e.target.value)} className="border border-stone-200 rounded p-2 text-xs w-64">
+                <option value="">Select Employee</option>
+                {employees.map(e => <option key={e.id} value={e.id}>{e.id} - {e.name}</option>)}
+            </select>
+            <input type="number" value={month} onChange={e => setMonth(parseInt(e.target.value))} className="border border-stone-200 rounded p-2 text-xs w-20" placeholder="Month" />
+            <input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="border border-stone-200 rounded p-2 text-xs w-24" placeholder="Year" />
+          </div>
+
+          {employee && (
+              <div className="mt-8">
+                  <div className="flex items-center gap-4 mb-6">
+                      <div className="w-16 h-16 bg-stone-200 rounded-full flex items-center justify-center font-bold text-xl">{employee.name.charAt(0)}</div>
+                      <div>
+                          <h3 className="font-bold text-lg">{employee.name}</h3>
+                          <p className="text-xs text-stone-500">{employee.designation} | {employee.category}</p>
+                      </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs text-left text-stone-700">
+                       <thead className="text-[10px] text-stone-500 uppercase border-b border-stone-200">
+                          <tr>
+                             <th className="px-3 py-3">Date</th>
+                             <th className="px-3 py-3">In Time</th>
+                             <th className="px-3 py-3">Out Time</th>
+                             <th className="px-3 py-3">Status</th>
+                          </tr>
+                       </thead>
+                       <tbody className="divide-y divide-stone-100">
+                          {days.map(d => {
+                              const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                              const record = empAttendance.find(a => a.dateISO === dateISO);
+                              return (
+                                  <tr key={d} className="hover:bg-stone-50 transition-colors">
+                                      <td className="px-3 py-3 font-medium">{dateISO}</td>
+                                      <td className="px-3 py-3">{record ? (record.manualInTime || record.sysInTime) : '-'}</td>
+                                      <td className="px-3 py-3">{record ? (record.manualOutTime || record.sysOutTime) : '-'}</td>
+                                      <td className="px-3 py-3">
+                                          {record ? <span className="text-green-600">Present</span> : <span className="text-red-400">Absent</span>}
+                                      </td>
+                                  </tr>
+                              )
+                          })}
+                       </tbody>
+                    </table>
+                  </div>
+              </div>
+          )}
+        </section>
+    );
+}

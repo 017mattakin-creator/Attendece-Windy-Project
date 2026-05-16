@@ -12,6 +12,8 @@ import Sidebar from './components/Sidebar';
 import EmployeeSection from './components/EmployeeSection';
 import AttendanceSection from './components/AttendanceSection';
 import ComparisonSection from './components/ComparisonSection';
+import MonthlyReportSection from './components/MonthlyReportSection';
+import TimeCardSection from './components/TimeCardSection';
 import UploadSection from './components/UploadSection';
 import ManualEntrySection from './components/ManualEntrySection';
 
@@ -194,6 +196,8 @@ export default function App() {
         }} />}
         {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} />}
         {activeSection === 'comparison' && <ComparisonSection employees={employees} attendance={attendance} />}
+        {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} />}
+        {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} />}
       </main>
     </div>
   );

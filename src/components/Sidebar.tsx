@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Users, Table, Upload, BarChart3, Settings } from 'lucide-react';
+import { Home, Users, Table, Upload, BarChart3, Settings, Clock } from 'lucide-react';
 
 interface Props {
   activeSection: string;
@@ -16,6 +16,8 @@ export default function Sidebar({ activeSection, setActiveSection, viewMode }: P
         { id: 'upload', name: 'Upload Data', icon: Upload },
     ] : []),
     { id: 'comparison', name: 'Comparison', icon: BarChart3 },
+    { id: 'monthly', name: 'Monthly Report', icon: Table },
+    { id: 'timecard', name: 'Time Card', icon: Clock },
   ];
 
   return (
