@@ -48,6 +48,9 @@ export default function App() {
   const [activeSection, setActiveSection] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
+  const [showProgress, setShowProgress] = useState(false);
+  const [showList, setShowList] = useState<'present' | 'absent' | null>(null);
+
   const fetchData = async () => {
     const conn = await checkConnection();
     setDbStatus(conn.connected ? 'connected' : 'error');
@@ -362,35 +365,101 @@ export default function App() {
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
               {/* Card 1: Employees & Present */}
-              <div className="bg-white p-4 md:p-6 border border-stone-200 shadow-sm rounded-sm flex justify-between items-center">
-                <div className="flex flex-col gap-1">
+              <div className="bg-white border border-stone-200 shadow-sm rounded-sm flex overflow-hidden">
+                <div className="flex-1 p-4 md:p-6 flex flex-col gap-1">
                   <div className="text-[9px] md:text-[10px] uppercase font-bold text-stone-400 tracking-widest leading-tight">Total Employees</div>
                   <div className="text-xl md:text-3xl font-serif italic text-stone-900 leading-none">{employees.length}</div>
                 </div>
-                <div className="h-10 w-px bg-stone-100"></div>
-                <div className="flex flex-col gap-1 text-right">
-                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-green-600 tracking-widest leading-tight">Present Today</div>
+                <div className="w-px bg-stone-100 my-4"></div>
+                <button 
+                  onClick={() => setShowList('present')}
+                  className="flex-1 p-4 md:p-6 flex flex-col gap-1 text-right hover:bg-green-50 transition-colors group cursor-pointer"
+                >
+                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-green-600 tracking-widest leading-tight group-hover:underline">Present Today</div>
                   <div className="text-xl md:text-3xl font-serif italic text-green-700 leading-none">
                     {attendance.filter(a => a.dateISO === new Date().toISOString().split('T')[0] && (a.status === 'Present' || a.status === 'Manual')).length}
                   </div>
-                </div>
+                </button>
               </div>
 
               {/* Card 2: Absent & Date */}
-              <div className="bg-white p-4 md:p-6 border border-stone-200 shadow-sm rounded-sm flex justify-between items-center text-stone-800">
-                <div className="flex flex-col gap-1">
-                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-red-500 tracking-widest leading-tight">Absent Today</div>
+              <div className="bg-white border border-stone-200 shadow-sm rounded-sm flex overflow-hidden">
+                <button 
+                  onClick={() => setShowList('absent')}
+                  className="flex-1 p-4 md:p-6 flex flex-col gap-1 hover:bg-red-50 transition-colors group cursor-pointer"
+                >
+                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-red-500 tracking-widest leading-tight group-hover:underline">Absent Today</div>
                   <div className="text-xl md:text-3xl font-serif italic text-red-600 leading-none">
                     {employees.length - attendance.filter(a => a.dateISO === new Date().toISOString().split('T')[0] && (a.status === 'Present' || a.status === 'Manual')).length}
                   </div>
-                </div>
-                <div className="h-10 w-px bg-stone-100"></div>
-                <div className="flex flex-col gap-1 text-right">
+                </button>
+                <div className="w-px bg-stone-100 my-4"></div>
+                <div className="flex-1 p-4 md:p-6 flex flex-col gap-1 text-right">
                   <div className="text-[9px] md:text-[10px] uppercase font-bold text-stone-500 tracking-widest leading-tight">System Date</div>
                   <div className="text-xs md:text-sm font-bold text-stone-800 leading-none uppercase">{new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
                 </div>
               </div>
             </div>
+
+            {/* Status List Modal */}
+            {showList && (
+              <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                <div className="bg-white w-full max-w-md rounded-sm shadow-xl flex flex-col max-h-[80vh]">
+                  <div className="p-4 border-b flex justify-between items-center bg-stone-50">
+                    <h3 className="font-serif italic text-stone-900 text-lg">
+                      {showList === 'present' ? 'Present Employees Today' : 'Absent Employees Today'}
+                    </h3>
+                    <button onClick={() => setShowList(null)} className="p-2 hover:bg-stone-200 rounded-full transition-colors">
+                      <X size={20} />
+                    </button>
+                  </div>
+                  <div className="overflow-y-auto p-2">
+                    {(() => {
+                      const today = new Date().toISOString().split('T')[0];
+                      const presentIds = attendance
+                        .filter(a => a.dateISO === today && (a.status === 'Present' || a.status === 'Manual'))
+                        .map(a => a.no);
+                      
+                      const list = showList === 'present' 
+                        ? employees.filter(e => presentIds.includes(e.id))
+                        : employees.filter(e => !presentIds.includes(e.id));
+
+                      if (list.length === 0) {
+                        return <div className="p-8 text-center text-stone-400 italic">No records found.</div>;
+                      }
+
+                      return (
+                        <div className="divide-y divide-stone-100">
+                          {list.map(emp => (
+                            <div key={emp.id} className="p-3 flex justify-between items-center hover:bg-stone-50">
+                              <div>
+                                <div className="text-sm font-bold text-stone-800">{emp.name}</div>
+                                <div className="text-[10px] text-stone-500 uppercase tracking-tighter">ID: {emp.id} • {emp.designation}</div>
+                              </div>
+                              <div className="text-[10px] text-stone-400 font-mono">
+                                {showList === 'present' ? (
+                                  attendance.find(a => a.dateISO === today && a.no === emp.id)?.sysInTime || '-'
+                                ) : (
+                                  'OFFLINE'
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <div className="p-4 border-t bg-stone-50 flex justify-end">
+                    <button 
+                      onClick={() => setShowList(null)}
+                      className="px-6 py-2 bg-stone-800 text-white text-xs font-bold uppercase rounded-sm hover:bg-stone-900 transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             {activeSection === 'dashboard' && (
           <div className="space-y-8">
 
@@ -432,7 +501,7 @@ export default function App() {
         {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} progress={uploadProgress} />}
         {activeSection === 'comparison' && <ComparisonSection employees={employees} attendance={attendance} />}
         {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
-        {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} />}
+        {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
           </>
         )}
       </main>

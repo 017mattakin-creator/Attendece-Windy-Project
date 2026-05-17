@@ -2,17 +2,21 @@ import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileSpreadsheet, FileText } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient';
 
 interface Props {
     employees: any[];
     attendance: any[];
+    onRefresh?: () => void;
+    viewMode?: 'admin' | 'user';
 }
 
-export default function TimeCardSection({ employees, attendance }: Props) {
+export default function TimeCardSection({ employees, attendance, onRefresh, viewMode }: Props) {
     const [selectedEmpId, setSelectedEmpId] = useState('');
     const [month, setMonth] = useState(new Date().getMonth() + 1);
     const [year, setYear] = useState(new Date().getFullYear());
+    const [updating, setUpdating] = useState<string | null>(null);
 
     const employee = employees.find(e => e.id === selectedEmpId);
     const now = new Date();
@@ -48,9 +52,9 @@ export default function TimeCardSection({ employees, attendance }: Props) {
     ];
 
     const getStatusDisplay = (record: any, isFuture: boolean) => {
-        if (!record) return isFuture ? { label: '-', color: 'text-stone-300' } : { label: 'A', color: 'text-red-400', value: 'Absent' };
+        if (!record) return isFuture ? { label: '-', color: 'text-stone-300', bg: '' } : { label: 'A', color: 'text-red-400', value: 'Absent', bg: 'bg-red-50' };
         const opt = STATUS_OPTIONS.find(o => o.value === record.status);
-        return opt ? { label: opt.label, color: opt.color, value: record.status } : { label: 'P', color: 'text-green-600', value: record.status };
+        return opt ? { label: opt.label, color: opt.color, value: record.status, bg: opt.bg } : { label: 'P', color: 'text-green-600', value: record.status, bg: 'bg-green-50' };
     };
 
     // Summary calculation
@@ -93,6 +97,41 @@ export default function TimeCardSection({ employees, attendance }: Props) {
             summary.offDay++;
         }
     });
+
+    const handleAttendanceUpdate = async (empId: string, dateISO: string, field: string, newValue: string) => {
+        setUpdating(`${empId}_${dateISO}_${field}`);
+        
+        try {
+            const { data: existing } = await supabase
+                .from('attendance')
+                .select('*')
+                .eq('employee_id', empId)
+                .eq('date_iso', dateISO)
+                .maybeSingle();
+
+            const updatePayload: any = {
+                ...(existing || {}),
+                employee_id: empId,
+                date_iso: dateISO,
+            };
+
+            if (field === 'status') updatePayload.status = newValue;
+            if (field === 'in') updatePayload.manual_in_time = newValue;
+            if (field === 'out') updatePayload.manual_out_time = newValue;
+
+            const { error } = await supabase.from('attendance').upsert([updatePayload], { onConflict: 'employee_id,date_iso' });
+
+            if (error) {
+                alert('Update failed: ' + error.message);
+            } else {
+                if (onRefresh) onRefresh();
+            }
+        } catch (err: any) {
+            alert('Error: ' + err.message);
+        } finally {
+            setUpdating(null);
+        }
+    };
 
     const exportToExcel = () => {
         if (!employee) return;
@@ -318,12 +357,53 @@ export default function TimeCardSection({ employees, attendance }: Props) {
                                       return (
                                           <tr key={d} className="hover:bg-stone-50 transition-colors">
                                               <td className="px-3 py-3 font-medium">{dateISO}</td>
-                                              <td className="px-3 py-3">{record ? (record.manualInTime || record.sysInTime) : '-'}</td>
-                                              <td className="px-3 py-3">{record ? (record.manualOutTime || record.sysOutTime) : '-'}</td>
                                               <td className="px-3 py-3">
-                                                  <span className={`font-bold ${status.color}`}>
-                                                      {status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present')))}
-                                                  </span>
+                                                  {viewMode === 'admin' ? (
+                                                      <input 
+                                                          type="time"
+                                                          defaultValue={record ? (record.manualInTime || record.sysInTime || '') : ''}
+                                                          onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'in', e.target.value)}
+                                                          className="w-24 text-[10px] border border-stone-200 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-amber-400"
+                                                      />
+                                                  ) : (
+                                                      record ? (record.manualInTime || record.sysInTime || '-') : '-'
+                                                  )}
+                                              </td>
+                                              <td className="px-3 py-3">
+                                                  {viewMode === 'admin' ? (
+                                                      <input 
+                                                          type="time"
+                                                          defaultValue={record ? (record.manualOutTime || record.sysOutTime || '') : ''}
+                                                          onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'out', e.target.value)}
+                                                          className="w-24 text-[10px] border border-stone-200 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-amber-400"
+                                                      />
+                                                  ) : (
+                                                      record ? (record.manualOutTime || record.sysOutTime || '-') : '-'
+                                                  )}
+                                              </td>
+                                              <td className="px-3 py-3">
+                                                  {viewMode === 'admin' ? (
+                                                      <div className="flex items-center gap-2">
+                                                          <select
+                                                              value={status.value || 'Absent'}
+                                                              onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'status', e.target.value)}
+                                                              disabled={updating?.startsWith(`${selectedEmpId}_${dateISO}`)}
+                                                              className={`text-[10px] font-bold border rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-stone-400 ${status.color} ${status.bg}`}
+                                                          >
+                                                              {STATUS_OPTIONS.filter(o => o.value !== 'Manual' || status.value === 'Manual').map(opt => (
+                                                                  <option key={opt.value} value={opt.value}>{opt.value}</option>
+                                                              ))}
+                                                              {!STATUS_OPTIONS.find(o => o.value === status.value) && status.value && (
+                                                                  <option value={status.value}>{status.value}</option>
+                                                              )}
+                                                          </select>
+                                                          {updating?.startsWith(`${selectedEmpId}_${dateISO}`) && <Loader2 size={12} className="animate-spin text-stone-400" />}
+                                                      </div>
+                                                  ) : (
+                                                      <span className={`font-bold ${status.color}`}>
+                                                          {status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present')))}
+                                                      </span>
+                                                  )}
                                               </td>
                                           </tr>
                                       )
