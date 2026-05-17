@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Table, Upload } from 'lucide-react';
+import { Table, Upload, Menu, X } from 'lucide-react';
 import Papa from 'papaparse';
 import { checkConnection, supabase } from './lib/supabaseClient';
 import EmployeeSelectorModal from './components/EmployeeSelectorModal';
@@ -46,6 +46,7 @@ interface Employee {
 export default function App() {
   const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
   const [activeSection, setActiveSection] = useState('dashboard');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
   const fetchData = async () => {
     const conn = await checkConnection();
@@ -116,8 +117,12 @@ export default function App() {
       setShowPasswordPrompt(false);
       setPasswordInput('');
     } else {
-      alert('Incorrect Password');
+      alert('Incorrect Password. Please check with your supervisor.');
     }
+  };
+
+  const handleAdminKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleAdminVerify();
   };
 
   const setMode = (mode: 'admin' | 'user') => {
@@ -251,6 +256,7 @@ export default function App() {
               };
           });
 
+          let errorCount = 0;
           // Batch upsert in chunks
           const chunkSize = 50;
           for (let i = 0; i < attendanceData.length; i += chunkSize) {
@@ -261,12 +267,17 @@ export default function App() {
             
             if (upsertError) {
               console.error('Upsert index error:', upsertError);
+              errorCount += chunk.length;
             }
             
             setUploadProgress(40 + Math.round(((i + chunk.length) / attendanceData.length) * 60));
           }
 
-          alert(`Upload complete! ${attendanceData.length} records updated. ${skippedCount} rows skipped (${uniqueSkippedIds.size} unique IDs not found in employee directory).`);
+          let msg = `Upload process finished.\n- ${attendanceData.length - errorCount} records updated successfully.`;
+          if (errorCount > 0) msg += `\n- ${errorCount} records failed to save.`;
+          if (skippedCount > 0) msg += `\n- ${skippedCount} items skipped because employee IDs were not found in directory.`;
+          
+          alert(msg);
           fetchData();
           setUploading(false);
           setUploadProgress(0);
@@ -276,34 +287,129 @@ export default function App() {
   };
 
   return (
-    <div className="flex bg-stone-100 min-h-screen">
-      <Sidebar activeSection={activeSection} setActiveSection={setActiveSection} viewMode={viewMode} />
-      <main className="flex-grow p-10">
+    <div className="flex bg-stone-100 min-h-screen relative overflow-x-hidden">
+      <Sidebar 
+        activeSection={activeSection} 
+        setActiveSection={(s) => {
+          setActiveSection(s);
+          setIsSidebarOpen(false);
+        }} 
+        viewMode={viewMode}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
+      <main className="flex-grow p-3 md:p-10 w-full max-w-full overflow-x-hidden">
         <header className="flex justify-between items-center mb-10">
-          <div>
-            <h1 className="text-2xl font-serif italic text-stone-900 tracking-wide">HR Attendance Assistant</h1>
+          <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="md:hidden p-2 bg-white rounded-sm shadow-sm border border-stone-200"
+            >
+              <Menu size={20} />
+            </button>
+            <h1 className="text-xl md:text-2xl font-serif italic text-stone-900 tracking-wide">HR Assistant</h1>
           </div>
           <div className="flex gap-4">
              {showPasswordPrompt ? (
                <div className="flex gap-2">
-                 <input type="password" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} className="bg-white border text-xs p-2" />
-                 <button onClick={handleAdminVerify} className="bg-amber-400 text-black px-4 py-2 text-xs font-bold uppercase">Verify</button>
+                 <input 
+                   type="password" 
+                   value={passwordInput} 
+                   onChange={e => setPasswordInput(e.target.value)} 
+                   onKeyDown={handleAdminKeyPress}
+                   placeholder="Enter Password"
+                   className="bg-white border border-stone-300 text-xs p-2 rounded focus:ring-1 focus:ring-amber-400 outline-none w-32" 
+                   autoFocus
+                 />
+                 <button onClick={handleAdminVerify} className="bg-amber-400 text-black px-4 py-2 text-xs font-bold uppercase rounded shadow-sm hover:bg-amber-500 transition-colors">Verify</button>
+                 <button onClick={() => setShowPasswordPrompt(false)} className="text-stone-400 hover:text-stone-600">
+                   <X size={18} />
+                 </button>
                </div>
              ) : (
-                <button onClick={() => viewMode === 'admin' ? setMode('admin') : setShowPasswordPrompt(true)} className={`px-4 py-2 text-xs font-bold uppercase ${viewMode === 'admin' ? 'bg-amber-400' : 'bg-white border'}`}>Admin</button>
+                <button 
+                  onClick={() => viewMode === 'admin' ? setViewMode('user') : setShowPasswordPrompt(true)} 
+                  className={`px-4 py-2 text-xs font-bold uppercase rounded transition-all ${viewMode === 'admin' ? 'bg-amber-400 text-black shadow-md' : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'}`}
+                >
+                  {viewMode === 'admin' ? '✓ Admin Mode' : 'Admin Login'}
+                </button>
              )}
           </div>
         </header>
 
-        {activeSection === 'dashboard' && (
-          <div>
-            <div className="text-sm mb-6">Welcome to HR Attendance Dashboard.</div>
-            <ManualEntrySection employees={employees} locations={locations} onRefresh={fetchData} />
+        {dbStatus === 'error' && (
+          <div className="bg-red-50 border border-red-100 p-4 rounded-sm mb-8 flex flex-col gap-2">
+            <h2 className="text-red-800 font-bold text-sm uppercase tracking-tight">Database Connection Failed</h2>
+            <p className="text-red-600 text-xs">
+              Please ensure your Supabase environment variables (URL and ANON KEY) are correctly configured in the project secrets.
+            </p>
+            <button 
+              onClick={fetchData}
+              className="text-[10px] font-bold uppercase bg-red-800 text-white px-3 py-1.5 w-fit rounded hover:bg-red-900 transition-colors"
+            >
+              Retry Connection
+            </button>
           </div>
         )}
-        {activeSection === 'employees' && <EmployeeSection employees={employees} onRefresh={fetchData} />}
-        {activeSection === 'locations' && <LocationSection locations={locations} onRefresh={fetchData} />}
-        {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees} locations={locations} onUpdateAttendance={async (r) => {
+
+        {dbStatus === 'checking' && (
+          <div className="flex items-center justify-center p-20">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-800"></div>
+          </div>
+        )}
+
+        {dbStatus === 'connected' && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+              {/* Card 1: Employees & Present */}
+              <div className="bg-white p-4 md:p-6 border border-stone-200 shadow-sm rounded-sm flex justify-between items-center">
+                <div className="flex flex-col gap-1">
+                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-stone-400 tracking-widest leading-tight">Total Employees</div>
+                  <div className="text-xl md:text-3xl font-serif italic text-stone-900 leading-none">{employees.length}</div>
+                </div>
+                <div className="h-10 w-px bg-stone-100"></div>
+                <div className="flex flex-col gap-1 text-right">
+                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-green-600 tracking-widest leading-tight">Present Today</div>
+                  <div className="text-xl md:text-3xl font-serif italic text-green-700 leading-none">
+                    {attendance.filter(a => a.dateISO === new Date().toISOString().split('T')[0] && (a.status === 'Present' || a.status === 'Manual')).length}
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: Absent & Date */}
+              <div className="bg-white p-4 md:p-6 border border-stone-200 shadow-sm rounded-sm flex justify-between items-center text-stone-800">
+                <div className="flex flex-col gap-1">
+                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-red-500 tracking-widest leading-tight">Absent Today</div>
+                  <div className="text-xl md:text-3xl font-serif italic text-red-600 leading-none">
+                    {employees.length - attendance.filter(a => a.dateISO === new Date().toISOString().split('T')[0] && (a.status === 'Present' || a.status === 'Manual')).length}
+                  </div>
+                </div>
+                <div className="h-10 w-px bg-stone-100"></div>
+                <div className="flex flex-col gap-1 text-right">
+                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-stone-500 tracking-widest leading-tight">System Date</div>
+                  <div className="text-xs md:text-sm font-bold text-stone-800 leading-none uppercase">{new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+                </div>
+              </div>
+            </div>
+            {activeSection === 'dashboard' && (
+          <div className="space-y-8">
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+               <div className="space-y-4">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-stone-500">Quick Actions</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                      <button onClick={() => setActiveSection('attendance')} className="bg-stone-800 text-white p-4 text-xs font-bold uppercase hover:bg-stone-900 transition-colors">Daily Entry</button>
+                      <button onClick={() => setActiveSection('monthly')} className="bg-stone-200 text-stone-800 p-4 text-xs font-bold uppercase hover:bg-stone-300 transition-colors">Monthly Report</button>
+                  </div>
+               </div>
+               
+               <ManualEntrySection employees={employees} locations={locations} onRefresh={fetchData} viewMode={viewMode} />
+            </div>
+          </div>
+        )}
+        {activeSection === 'employees' && <EmployeeSection employees={employees} onRefresh={fetchData} viewMode={viewMode} />}
+        {activeSection === 'locations' && <LocationSection locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
+        {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees} locations={locations} viewMode={viewMode} onUpdateAttendance={async (r) => {
             const { error } = await supabase.from('attendance').upsert([{ 
                 employee_id: String(r.empId).trim(), 
                 date_iso: r.date, 
@@ -315,16 +421,20 @@ export default function App() {
             
             if (error) {
                 console.error('Save error:', error);
-                alert('Error saving: ' + error.message);
+                alert('Database Error: ' + error.message + '\n\nPlease ensure your Supabase table has a unique constraint on (employee_id, date_iso).');
             } else {
                 await fetchData();
-                alert('Saved');
+                // We don't alert here to avoid annoying the user on every row save if they are doing it many times,
+                // but let's at least show a console log or small toast if we had one.
+                console.log('Saved attendance for', r.empId);
             }
         }} />}
         {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} progress={uploadProgress} />}
         {activeSection === 'comparison' && <ComparisonSection employees={employees} attendance={attendance} />}
-        {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} />}
+        {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} />}
+          </>
+        )}
       </main>
     </div>
   );

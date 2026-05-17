@@ -23,10 +23,11 @@ interface Props {
     attendance: AttendanceRecord[];
     employees: any[];
     locations: any[];
+    viewMode: 'admin' | 'user';
     onUpdateAttendance: (record: any) => void;
 }
 
-export default function AttendanceSection({ attendance, employees, locations, onUpdateAttendance }: Props) {
+export default function AttendanceSection({ attendance, employees, locations, viewMode, onUpdateAttendance }: Props) {
     const [filterEmp, setFilterEmp] = useState('');
     const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
     
@@ -80,7 +81,7 @@ export default function AttendanceSection({ attendance, employees, locations, on
     };
 
     return (
-        <section className="bg-white p-8 rounded-lg shadow-sm border border-stone-100">
+        <section className="bg-white p-4 md:p-8 rounded-lg shadow-sm border border-stone-100">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
                 <h2 className="text-sm font-bold uppercase tracking-widest text-stone-800">Attendance Report</h2>
                 <div className="flex gap-2">
@@ -120,7 +121,7 @@ export default function AttendanceSection({ attendance, employees, locations, on
                     </thead>
                     <tbody>
                         {renderData.map((item, i) => (
-                            <EditableRow key={i} item={item} date={filterDate} locations={locations} onSave={onUpdateAttendance} />
+                            <EditableRow key={i} item={item} date={filterDate} locations={locations} onSave={onUpdateAttendance} viewMode={viewMode} />
                         ))}
                     </tbody>
                 </table>
@@ -129,7 +130,7 @@ export default function AttendanceSection({ attendance, employees, locations, on
     );
 }
 
-function EditableRow({ item, date, locations, onSave }: { item: any, date: string, locations: any[], onSave: any, key?: any }) {
+function EditableRow({ item, date, locations, onSave, viewMode }: { item: any, date: string, locations: any[], onSave: any, viewMode: 'admin' | 'user', key?: any }) {
     const [inTime, setInTime] = useState(item.record.manualInTime || item.record.sysInTime || '');
     const [outTime, setOutTime] = useState(item.record.manualOutTime || item.record.sysOutTime || '');
     const [locationId, setLocationId] = useState(item.record.locationId || '');
@@ -150,7 +151,8 @@ function EditableRow({ item, date, locations, onSave }: { item: any, date: strin
                     placeholder={item.record.sysInTime || "00:00"} 
                     value={inTime} 
                     onChange={e => setInTime(e.target.value)} 
-                    className="border border-stone-200 rounded px-2 py-1.5 w-24 text-xs focus:ring-1 focus:ring-stone-400 outline-none transition-all"
+                    disabled={viewMode !== 'admin'}
+                    className={`border border-stone-200 rounded px-2 py-1.5 w-24 text-xs focus:ring-1 focus:ring-stone-400 outline-none transition-all ${viewMode !== 'admin' ? 'bg-stone-50 text-stone-400' : ''}`}
                 />
             </td>
             <td className="px-3 py-3">
@@ -159,14 +161,16 @@ function EditableRow({ item, date, locations, onSave }: { item: any, date: strin
                     placeholder={item.record.sysOutTime || "00:00"} 
                     value={outTime} 
                     onChange={e => setOutTime(e.target.value)} 
-                    className="border border-stone-200 rounded px-2 py-1.5 w-24 text-xs focus:ring-1 focus:ring-stone-400 outline-none transition-all"
+                    disabled={viewMode !== 'admin'}
+                    className={`border border-stone-200 rounded px-2 py-1.5 w-24 text-xs focus:ring-1 focus:ring-stone-400 outline-none transition-all ${viewMode !== 'admin' ? 'bg-stone-50 text-stone-400' : ''}`}
                 />
             </td>
             <td className="px-3 py-3">
                 <select 
                     value={locationId} 
                     onChange={e => setLocationId(e.target.value)}
-                    className="border border-stone-200 rounded px-2 py-1.5 w-32 text-xs focus:ring-1 focus:ring-stone-400 outline-none transition-all"
+                    disabled={viewMode !== 'admin'}
+                    className={`border border-stone-200 rounded px-2 py-1.5 w-32 text-xs focus:ring-1 focus:ring-stone-400 outline-none transition-all ${viewMode !== 'admin' ? 'bg-stone-50 text-stone-400' : ''}`}
                 >
                     <option value="">Select Location</option>
                     {locations.map(loc => (
@@ -175,12 +179,16 @@ function EditableRow({ item, date, locations, onSave }: { item: any, date: strin
                 </select>
             </td>
             <td className="px-3 py-3">
-                <button 
-                    onClick={() => onSave({ empId: item.emp.id, date, inTime, outTime, locationId })} 
-                    className="bg-stone-800 text-white hover:bg-stone-900 px-3 py-1.5 rounded text-[10px] uppercase font-bold tracking-wider transition-colors"
-                >
-                    Save
-                </button>
+                {viewMode === 'admin' ? (
+                  <button 
+                      onClick={() => onSave({ empId: item.emp.id, date, inTime, outTime, locationId })} 
+                      className="bg-stone-800 text-white hover:bg-stone-900 px-3 py-1.5 rounded text-[10px] uppercase font-bold tracking-wider transition-colors"
+                  >
+                      Save
+                  </button>
+                ) : (
+                  <span className="text-[10px] text-stone-400 font-bold uppercase">View Only</span>
+                )}
             </td>
         </tr>
     );

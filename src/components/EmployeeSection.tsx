@@ -15,9 +15,10 @@ interface Employee {
 interface Props {
     employees: Employee[];
     onRefresh: () => void;
+    viewMode: 'admin' | 'user';
 }
 
-export default function EmployeeSection({ employees, onRefresh }: Props) {
+export default function EmployeeSection({ employees, onRefresh, viewMode }: Props) {
     const [newEmp, setNewEmp] = useState<Partial<Employee>>({});
 
     const handleAdd = async () => {
@@ -39,13 +40,19 @@ export default function EmployeeSection({ employees, onRefresh }: Props) {
         <section className="bg-white p-6 rounded-sm shadow-sm">
             <h2 className="text-sm font-bold uppercase tracking-widest text-stone-700 mb-6">Employee Directory</h2>
             
-            <div className="flex gap-2 mb-6">
-                <input placeholder="ID" className="border p-2 text-xs" value={newEmp.id || ''} onChange={e => setNewEmp({...newEmp, id: e.target.value})} />
-                <input placeholder="Name" className="border p-2 text-xs" value={newEmp.name || ''} onChange={e => setNewEmp({...newEmp, name: e.target.value})} />
-                <input placeholder="Designation" className="border p-2 text-xs" value={newEmp.designation || ''} onChange={e => setNewEmp({...newEmp, designation: e.target.value})} />
-                <input placeholder="Category" className="border p-2 text-xs" value={newEmp.category || ''} onChange={e => setNewEmp({...newEmp, category: e.target.value})} />
-                <button onClick={handleAdd} className="bg-stone-800 text-white px-4 py-2 font-bold uppercase text-xs">Add</button>
-            </div>
+            {viewMode === 'admin' ? (
+                <div className="flex gap-2 mb-6">
+                    <input placeholder="ID" className="border p-2 text-xs" value={newEmp.id || ''} onChange={e => setNewEmp({...newEmp, id: e.target.value})} />
+                    <input placeholder="Name" className="border p-2 text-xs" value={newEmp.name || ''} onChange={e => setNewEmp({...newEmp, name: e.target.value})} />
+                    <input placeholder="Designation" className="border p-2 text-xs" value={newEmp.designation || ''} onChange={e => setNewEmp({...newEmp, designation: e.target.value})} />
+                    <input placeholder="Category" className="border p-2 text-xs" value={newEmp.category || ''} onChange={e => setNewEmp({...newEmp, category: e.target.value})} />
+                    <button onClick={handleAdd} className="bg-stone-800 text-white px-4 py-2 font-bold uppercase text-xs">Add</button>
+                </div>
+            ) : (
+                <div className="mb-6 p-4 bg-stone-50 border border-stone-100 text-[10px] uppercase font-bold text-stone-400 tracking-wider">
+                    Only administrators can add new employees
+                </div>
+            )}
 
             <div className="overflow-x-auto">
                 <table className="w-full text-xs text-left text-stone-800">
