@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, MapPin } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 
 interface Props {
@@ -142,12 +142,16 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
             const record = empAttendance.find(a => a.dateISO === dateISO);
             const isFuture = dateISO > new Date().toISOString().split('T')[0];
             const status = getStatusDisplay(record, isFuture);
-            return {
+            const base = {
                 'Date': dateISO,
                 'In Time': record ? (record.manualInTime || record.sysInTime) : '-',
                 'Out Time': record ? (record.manualOutTime || record.sysOutTime) : '-',
                 'Status': status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present')))
             };
+            if (viewMode === 'admin') {
+                (base as any)['Live Location'] = record?.live_location || '-';
+            }
+            return base;
         });
 
         // Add summary row at bottom
@@ -212,7 +216,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
         });
         
         // Attendance Details Table
-        const head = [['Date', 'In Time', 'Out Time', 'Status']];
+        const head = [['Date', 'In Time', 'Out Time', 'Status', ...(viewMode === 'admin' ? ['Live Loc'] : [])]];
         const body = days.map(d => {
             const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             const record = empAttendance.find(a => a.dateISO === dateISO);
@@ -222,7 +226,8 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                 dateISO,
                 record ? (record.manualInTime || record.sysInTime) : '-',
                 record ? (record.manualOutTime || record.sysOutTime) : '-',
-                status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present')))
+                status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present'))),
+                ...(viewMode === 'admin' ? [record?.live_location || '-'] : [])
             ];
         });
 
@@ -264,7 +269,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
           <div className="flex flex-wrap gap-4 mb-8 bg-stone-50 p-4 rounded-md border border-stone-100">
             <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase font-bold text-stone-500">Select Employee</label>
-                <select value={selectedEmpId} onChange={e => setSelectedEmpId(e.target.value)} className="border border-stone-200 rounded p-2 text-xs w-64 focus:ring-1 focus:ring-stone-400 outline-none">
+                <select value={selectedEmpId || ''} onChange={e => setSelectedEmpId(e.target.value)} className="border border-stone-200 rounded p-2 text-xs w-64 focus:ring-1 focus:ring-stone-400 outline-none">
                     <option value="">Choose an employee...</option>
                     {employees.map(e => <option key={e.id} value={e.id}>{e.id} - {e.name}</option>)}
                 </select>
@@ -344,6 +349,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                              <th className="px-3 py-3">Date</th>
                              <th className="px-3 py-3">In Time</th>
                              <th className="px-3 py-3">Out Time</th>
+                             {viewMode === 'admin' && <th className="px-3 py-3">Live Loc</th>}
                              <th className="px-3 py-3">Status</th>
                           </tr>
                        </thead>
@@ -381,6 +387,30 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                                                       record ? (record.manualOutTime || record.sysOutTime || '-') : '-'
                                                   )}
                                               </td>
+                                              {viewMode === 'admin' && (
+                                                  <td className="px-3 py-3 text-center">
+                                                      {record?.live_location ? (() => {
+                                                          try {
+                                                              const loc = JSON.parse(record.live_location);
+                                                              return (
+                                                                  <a 
+                                                                      href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
+                                                                      target="_blank"
+                                                                      rel="noreferrer"
+                                                                      className="inline-flex items-center gap-1 text-[10px] bg-red-50 text-red-600 px-2 py-1 rounded border border-red-100 hover:bg-red-100 transition-colors"
+                                                                      title={`${loc.lat}, ${loc.lng}`}
+                                                                  >
+                                                                      <MapPin size={10} /> Map
+                                                                  </a>
+                                                              );
+                                                          } catch (e) {
+                                                              return <span className="text-stone-300">-</span>;
+                                                          }
+                                                      })() : (
+                                                          <span className="text-stone-300">-</span>
+                                                      )}
+                                                  </td>
+                                              )}
                                               <td className="px-3 py-3">
                                                   {viewMode === 'admin' ? (
                                                       <div className="flex items-center gap-2">

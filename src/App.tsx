@@ -17,6 +17,7 @@ import TimeCardSection from './components/TimeCardSection';
 import LocationSection from './components/LocationSection';
 import UploadSection from './components/UploadSection';
 import ManualEntrySection from './components/ManualEntrySection';
+import LiveLocationMap from './components/LiveLocationMap';
 
 interface AttendanceRecord {
   name: string;
@@ -30,6 +31,9 @@ interface AttendanceRecord {
   status: string;
   locationId: string;
   idNumber: string;
+  live_location?: string;
+  live_location_in?: string;
+  live_location_out?: string;
 }
 
 interface Employee {
@@ -78,15 +82,18 @@ export default function App() {
             const row = {
                 no: a.employee_id ? String(a.employee_id).trim() : '',
                 name: a.employees?.name || 'Unknown',
-                dateISO: a.date_iso,
-                date: a.date_iso,
-                sysInTime: a.sys_in_time,
-                sysOutTime: a.sys_out_time,
-                manualInTime: a.manual_in_time,
-                manualOutTime: a.manual_out_time,
-                status: a.status,
-                locationId: a.location_id,
-                idNumber: a.id_number,
+                dateISO: a.date_iso || '',
+                date: a.date_iso || '',
+                sysInTime: a.sys_in_time || '',
+                sysOutTime: a.sys_out_time || '',
+                manualInTime: a.manual_in_time || '',
+                manualOutTime: a.manual_out_time || '',
+                status: a.status || 'Absent',
+                locationId: a.location_id || '',
+                idNumber: a.id_number || '',
+                live_location: a.live_location || '',
+                live_location_in: a.live_location_in || '',
+                live_location_out: a.live_location_out || '',
             };
             if (row.name === 'Unknown') {
               console.warn('Employee JOIN failed for record:', a);
@@ -290,7 +297,7 @@ export default function App() {
   };
 
   return (
-    <div className="flex bg-stone-100 min-h-screen relative overflow-x-hidden">
+      <div className="flex bg-stone-100 min-h-screen relative overflow-x-hidden">
       <Sidebar 
         activeSection={activeSection} 
         setActiveSection={(s) => {
@@ -470,6 +477,13 @@ export default function App() {
                       <button onClick={() => setActiveSection('attendance')} className="bg-stone-800 text-white p-4 text-xs font-bold uppercase hover:bg-stone-900 transition-colors">Daily Entry</button>
                       <button onClick={() => setActiveSection('monthly')} className="bg-stone-200 text-stone-800 p-4 text-xs font-bold uppercase hover:bg-stone-300 transition-colors">Monthly Report</button>
                   </div>
+                  
+                  {viewMode === 'admin' && (
+                    <div className="pt-4">
+                       <h3 className="text-xs font-bold uppercase tracking-widest text-stone-500 mb-2">Live Location (Admin Only)</h3>
+                       <LiveLocationMap attendance={attendance} />
+                    </div>
+                  )}
                </div>
                
                <ManualEntrySection employees={employees} locations={locations} onRefresh={fetchData} viewMode={viewMode} />
@@ -479,12 +493,19 @@ export default function App() {
         {activeSection === 'employees' && <EmployeeSection employees={employees} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'locations' && <LocationSection locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees} locations={locations} viewMode={viewMode} onUpdateAttendance={async (r) => {
+            // First find existing to preserve live_location
+            const existing = attendance.find(a => a.no === String(r.empId).trim() && a.dateISO === r.date);
+            
             const { error } = await supabase.from('attendance').upsert([{ 
                 employee_id: String(r.empId).trim(), 
                 date_iso: r.date, 
                 manual_in_time: r.inTime || null, 
                 manual_out_time: r.outTime || null, 
                 location_id: r.locationId || null,
+                id_number: existing?.idNumber || String(r.empId).trim(),
+                live_location: existing?.live_location || null,
+                live_location_in: existing?.live_location_in || null,
+                live_location_out: existing?.live_location_out || null,
                 status: 'Manual' 
             }], { onConflict: 'employee_id,date_iso' });
             

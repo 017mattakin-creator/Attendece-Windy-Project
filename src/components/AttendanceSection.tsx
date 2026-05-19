@@ -3,7 +3,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileSpreadsheet, FileText } from 'lucide-react';
+import { FileSpreadsheet, FileText, MapPin } from 'lucide-react';
 
 interface AttendanceRecord {
   name: string;
@@ -16,6 +16,9 @@ interface AttendanceRecord {
   manualOutTime: string;
   status: string;
   locationId: string;
+  live_location?: string;
+  live_location_in?: string;
+  live_location_out?: string;
   idNumber: string;
 }
 
@@ -36,20 +39,51 @@ export default function AttendanceSection({ attendance, employees, locations, vi
         const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === filterDate);
         return {
             emp,
-            record: record || { manualInTime: '', manualOutTime: '', sysInTime: '', sysOutTime: '', locationId: '' }
+            record: record || { manualInTime: '', manualOutTime: '', sysInTime: '', sysOutTime: '', locationId: '', live_location: '', live_location_in: '', live_location_out: '' }
         };
     }).filter(item => filterEmp === '' || item.emp.id === filterEmp);
 
     const exportToExcel = () => {
-        const data = renderData.map(item => ({
-            'ID': item.emp.id,
-            'Name': item.emp.name,
-            'Designation': item.emp.designation,
-            'Category': item.emp.category,
-            'In Time': item.record.manualInTime || item.record.sysInTime || '-',
-            'Out Time': item.record.manualOutTime || item.record.sysOutTime || '-',
-            'Location': locations.find(l => l.id === (item.record as any).locationId)?.name || (item.record as any).locationId || '-'
-        }));
+        const data = renderData.map(item => {
+            const base = {
+                'ID': item.emp.id,
+                'Name': item.emp.name,
+                'Designation': item.emp.designation,
+                'Category': item.emp.category,
+                'In Time': item.record.manualInTime || item.record.sysInTime || '-',
+                'Out Time': item.record.manualOutTime || item.record.sysOutTime || '-',
+                'Location': locations.find(l => l.id === (item.record as any).locationId)?.name || (item.record as any).locationId || '-',
+                'IN GPS Address': (() => {
+                    try {
+                        const raw = item.record.live_location_in || item.record.live_location || '{}';
+                        let loc = JSON.parse(raw);
+                        // Deep fallback check
+                        if (!loc.lat && loc.in) loc = loc.in;
+                        
+                        if (loc && loc.address) return loc.address;
+                        if (loc && loc.lat) return `${Number(loc.lat).toFixed(4)}, ${Number(loc.lng).toFixed(4)}`;
+                        return '-';
+                    } catch { return '-'; }
+                })(),
+                'OUT GPS Address': (() => {
+                    try {
+                        const raw = item.record.live_location_out || item.record.live_location || '{}';
+                        let loc = JSON.parse(raw);
+                        // Deep fallback check
+                        if (loc.out) loc = loc.out;
+                        else if (!item.record.live_location_out) return '-'; // Don't show IN info as OUT
+                        
+                        if (loc && loc.address) return loc.address;
+                        if (loc && loc.lat) return `${Number(loc.lat).toFixed(4)}, ${Number(loc.lng).toFixed(4)}`;
+                        return '-';
+                    } catch { return '-'; }
+                })()
+            };
+            if (viewMode === 'admin') {
+                (base as any)['Live Location'] = item.record.live_location || '-';
+            }
+            return base;
+        });
 
         const worksheet = XLSX.utils.json_to_sheet(data);
         const workbook = XLSX.utils.book_new();
@@ -61,13 +95,37 @@ export default function AttendanceSection({ attendance, employees, locations, vi
         const doc = new jsPDF();
         doc.text(`Attendance Report: ${filterDate}`, 14, 15);
         
-        const head = [['ID', 'Name', 'In Time', 'Out Time', 'Location']];
+        const head = [
+            ['ID', 'Name', 'In Time', 'Out Time', 'Location', 'IN GPS Address', 'OUT GPS Address', ...(viewMode === 'admin' ? ['Live Loc'] : [])]
+        ];
         const body = renderData.map(item => [
             item.emp.id,
             item.emp.name,
             item.record.manualInTime || item.record.sysInTime || '-',
             item.record.manualOutTime || item.record.sysOutTime || '-',
-            locations.find(l => l.id === (item.record as any).locationId)?.name || (item.record as any).locationId || '-'
+            locations.find(l => l.id === (item.record as any).locationId)?.name || (item.record as any).locationId || '-',
+            (() => {
+                try {
+                    const raw = item.record.live_location_in || item.record.live_location || '{}';
+                    let loc = JSON.parse(raw);
+                    if (!loc.lat && loc.in) loc = loc.in;
+                    if (loc && loc.address) return loc.address;
+                    if (loc && loc.lat) return `${Number(loc.lat).toFixed(4)}, ${Number(loc.lng).toFixed(4)}`;
+                    return '-';
+                } catch { return '-'; }
+            })(),
+            (() => {
+                try {
+                    const raw = item.record.live_location_out || item.record.live_location || '{}';
+                    let loc = JSON.parse(raw);
+                    if (loc.out) loc = loc.out;
+                    else if (!item.record.live_location_out) return '-';
+                    if (loc && loc.address) return loc.address;
+                    if (loc && loc.lat) return `${Number(loc.lat).toFixed(4)}, ${Number(loc.lng).toFixed(4)}`;
+                    return '-';
+                } catch { return '-'; }
+            })(),
+            ...(viewMode === 'admin' ? [item.record.live_location || '-'] : [])
         ]);
 
         autoTable(doc, {
@@ -116,6 +174,9 @@ export default function AttendanceSection({ attendance, employees, locations, vi
                             <th className="px-3 py-3">In Time</th>
                             <th className="px-3 py-3">Out Time</th>
                             <th className="px-3 py-3">Location</th>
+                            <th className="px-3 py-3">IN Address</th>
+                            <th className="px-3 py-3">OUT Address</th>
+                            {viewMode === 'admin' && <th className="px-3 py-3 text-center">Live Loc</th>}
                             <th className="px-3 py-3">Action</th>
                         </tr>
                     </thead>
@@ -167,7 +228,7 @@ function EditableRow({ item, date, locations, onSave, viewMode }: { item: any, d
             </td>
             <td className="px-3 py-3">
                 <select 
-                    value={locationId} 
+                    value={locationId || ''} 
                     onChange={e => setLocationId(e.target.value)}
                     disabled={viewMode !== 'admin'}
                     className={`border border-stone-200 rounded px-2 py-1.5 w-32 text-xs focus:ring-1 focus:ring-stone-400 outline-none transition-all ${viewMode !== 'admin' ? 'bg-stone-50 text-stone-400' : ''}`}
@@ -178,6 +239,71 @@ function EditableRow({ item, date, locations, onSave, viewMode }: { item: any, d
                     ))}
                 </select>
             </td>
+            <td className="px-3 py-3">
+                <div className="max-w-[150px]">
+                    {item.record.live_location_in || item.record.live_location ? (() => {
+                        try {
+                            const raw = item.record.live_location_in || item.record.live_location;
+                            let loc = JSON.parse(raw);
+                            if (!loc.lat && loc.in) loc = loc.in;
+                            
+                            if (loc && loc.address) return (
+                                <div className="flex flex-col">
+                                    <span className="text-[9px] text-stone-800 font-bold leading-tight uppercase tracking-tight line-clamp-2">{loc.address}</span>
+                                    <span className="text-[8px] text-stone-400 font-mono mt-0.5">{Number(loc.lat).toFixed(4)}, {Number(loc.lng).toFixed(4)}</span>
+                                </div>
+                            );
+                            if (loc && loc.lat) return <span className="text-[9px] text-stone-400 font-mono italic">{Number(loc.lat).toFixed(4)}, {Number(loc.lng).toFixed(4)}</span>;
+                            return <span className="text-stone-300">-</span>;
+                        } catch { return <span className="text-stone-300">-</span>; }
+                    })() : <span className="text-stone-300 italic text-[9px]">Not Tracked</span>}
+                </div>
+            </td>
+            <td className="px-3 py-3">
+                <div className="max-w-[150px]">
+                    {item.record.live_location_out || item.record.live_location ? (() => {
+                        try {
+                            const raw = item.record.live_location_out || item.record.live_location;
+                            let loc = JSON.parse(raw);
+                            if (loc.out) loc = loc.out;
+                            else if (!item.record.live_location_out) return <span className="text-stone-300">-</span>;
+                            
+                            if (loc && loc.address) return (
+                                <div className="flex flex-col">
+                                    <span className="text-[9px] text-stone-800 font-bold leading-tight uppercase tracking-tight line-clamp-2">{loc.address}</span>
+                                    <span className="text-[8px] text-stone-400 font-mono mt-0.5">{Number(loc.lat).toFixed(4)}, {Number(loc.lng).toFixed(4)}</span>
+                                </div>
+                            );
+                            if (loc && loc.lat) return <span className="text-[9px] text-stone-400 font-mono italic">{Number(loc.lat).toFixed(4)}, {Number(loc.lng).toFixed(4)}</span>;
+                            return <span className="text-stone-300">-</span>;
+                        } catch { return <span className="text-stone-300">-</span>; }
+                    })() : <span className="text-stone-300 italic text-[9px]">Not Tracked</span>}
+                </div>
+            </td>
+            {viewMode === 'admin' && (
+                <td className="px-3 py-3 text-center">
+                    {item.record.live_location ? (() => {
+                        try {
+                            const loc = JSON.parse(item.record.live_location);
+                            return (
+                                <a 
+                                    href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 text-[10px] bg-red-50 text-red-600 px-2 py-1 rounded border border-red-100 hover:bg-red-100 transition-colors"
+                                    title={`${loc.lat}, ${loc.lng}`}
+                                >
+                                    <MapPin size={10} /> Map
+                                </a>
+                            );
+                        } catch (e) {
+                            return <span className="text-stone-300">-</span>;
+                        }
+                    })() : (
+                        <span className="text-stone-300">-</span>
+                    )}
+                </td>
+            )}
             <td className="px-3 py-3">
                 {viewMode === 'admin' ? (
                   <button 

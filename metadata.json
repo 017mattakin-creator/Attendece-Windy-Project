@@ -1,7 +1,7 @@
 {
   "name": "HR Attendance Assistant",
   "description": "An attendance analysis tool for employees that calculates working hours, detects lateness, and generates HR-compliant reports.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
 

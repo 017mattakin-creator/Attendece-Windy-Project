@@ -24,6 +24,7 @@ export default function ComparisonSection({ employees, attendance }: Props) {
                      <th className="px-3 py-3">Name</th>
                      <th className="px-3 py-3" colSpan={2}>{compareDate1 || 'Date 1'} (In / Out)</th>
                      <th className="px-3 py-3" colSpan={2}>{compareDate2 || 'Date 2'} (In / Out)</th>
+                     <th className="px-3 py-3">Maps</th>
                   </tr>
                </thead>
                <tbody className="divide-y divide-stone-100">
@@ -33,6 +34,16 @@ export default function ComparisonSection({ employees, attendance }: Props) {
                       
                       const formatTime = (time: string) => time || '--:--';
 
+                      const renderMapLink = (rec: any) => {
+                          if (!rec?.live_location) return <span className="text-stone-300">-</span>;
+                          try {
+                              const loc = JSON.parse(rec.live_location);
+                              return (
+                                  <a href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`} target="_blank" rel="noreferrer" className="text-red-600 hover:underline">Loc</a>
+                              );
+                          } catch (e) { return <span className="text-stone-300">-</span>; }
+                      };
+
                       return (
                           <tr key={emp.id} className="hover:bg-stone-50 transition-colors">
                               <td className="px-3 py-3 font-medium text-stone-900">{emp.id}</td>
@@ -41,6 +52,9 @@ export default function ComparisonSection({ employees, attendance }: Props) {
                               <td className="px-3 py-3 font-mono">{formatTime(rec1?.manualOutTime || rec1?.sysOutTime)}</td>
                               <td className="px-3 py-3 font-mono">{formatTime(rec2?.manualInTime || rec2?.sysInTime)}</td>
                               <td className="px-3 py-3 font-mono">{formatTime(rec2?.manualOutTime || rec2?.sysOutTime)}</td>
+                              <td className="px-3 py-3 flex gap-2">
+                                  {renderMapLink(rec1)} / {renderMapLink(rec2)}
+                              </td>
                           </tr>
                       )
                   })}

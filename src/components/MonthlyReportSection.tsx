@@ -221,7 +221,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
                                 return (
                                     <td key={d} className={`px-0 py-1 text-center group relative ${isThisCellUpdating ? 'opacity-50' : ''}`}>
                                         <select 
-                                          value={currentStatus}
+                                          value={currentStatus || 'Absent'} 
                                           onChange={(e) => handleStatusChange(emp.id, dateISO, e.target.value)}
                                           disabled={isFuture || isThisCellUpdating || viewMode !== 'admin'}
                                           className={`w-full h-full appearance-none bg-transparent text-center font-bold py-2 outline-none rounded ${displayOpt.color} ${viewMode === 'admin' ? 'cursor-pointer hover:bg-stone-100' : 'cursor-default'} focus:ring-1 focus:ring-stone-300`}
