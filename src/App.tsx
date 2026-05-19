@@ -34,6 +34,7 @@ interface AttendanceRecord {
   live_location?: string;
   live_location_in?: string;
   live_location_out?: string;
+  late_remark?: string;
 }
 
 interface Employee {
@@ -94,6 +95,7 @@ export default function App() {
                 live_location: a.live_location || '',
                 live_location_in: a.live_location_in || '',
                 live_location_out: a.live_location_out || '',
+                late_remark: a.late_remark || '',
             };
             if (row.name === 'Unknown') {
               console.warn('Employee JOIN failed for record:', a);

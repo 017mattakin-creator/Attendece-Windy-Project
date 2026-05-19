@@ -31,7 +31,9 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
   const [location, setLocation] = useState('');
   const [liveLocIn, setLiveLocIn] = useState<any | null>(null);
   const [liveLocOut, setLiveLocOut] = useState<any | null>(null);
+  const [lateRemark, setLateRemark] = useState('');
   const [locing, setLocing] = useState(false);
+  const [locingType, setLocingType] = useState<'in' | 'out' | null>(null);
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -53,6 +55,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
       setInTime('');
       setOutTime('');
       setLocation('');
+      setLateRemark('');
     }
   }, [selectedEmp]);
 
@@ -85,6 +88,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
           setInTime(formatTime(data.manual_in_time || data.sys_in_time || ''));
           setOutTime(formatTime(data.manual_out_time || data.sys_out_time || ''));
           setLocation(data.location_id || '');
+          setLateRemark(data.late_remark || '');
           
           if (data.live_location_in) {
             try { setLiveLocIn(JSON.parse(data.live_location_in)); } catch (e) { setLiveLocIn(null); }
@@ -113,6 +117,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
   }, [selectedEmp, date]);
 
   const handleSetTime = (type: 'in' | 'out') => {
+    if (locing) return;
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     if (type === 'in') {
@@ -130,6 +135,8 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
       return;
     }
     setLocing(true);
+    setLocingType(type);
+    
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
@@ -155,25 +162,48 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
             }
           })
           .catch(err => console.error("Geocoding error:", err))
-          .finally(() => setLocing(false));
+          .finally(() => {
+            setLocing(false);
+            setLocingType(null);
+          });
       },
       (error) => {
         console.error("Loc error:", error);
         setLocing(false);
-        // Silently log for user mode to not annoy, but show alert if they clicked sync manually
-        if (viewMode === 'admin') {
-          let msg = "Location capture failed.";
-          if (error.code === 1) msg = "Please allow location permission in your browser/device settings.";
-          else if (error.code === 3) msg = "Location request timed out. Please try again.";
-          alert(msg);
+        setLocingType(null);
+        let msg = "Location capture failed.";
+        let bnMsg = "লোকেশন পাওয়া যায়নি। ";
+        
+        if (error.code === 1) {
+           msg = "Permission denied. Please allow location permission. If you see 'Close bubbles/overlays', please close Facebook Messenger 'Chat Heads' or other floating apps and try again.";
+           bnMsg += "\n\nফেসবুক মেসেঞ্জার বা অন্য কোনো অ্যাপের 'পপ-আপ' বা 'বাবল' চালু থাকলে তা বন্ধ করে আবার চেষ্টা করুন। ব্রাউজারের লোকেশন পারমিশন এলাউ করুন।";
+        } else if (error.code === 3) {
+           msg = "Location request timed out.";
+           bnMsg += "\nসময় শেষ হয়ে গেছে (Timeout)! ইন্টারেনেট ঠিক আছে কিনা দেখে নিন।";
         }
+        alert(`${msg}\n\n${bnMsg}`);
       },
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
     );
   };
 
   const handleSubmit = async () => {
     if (!selectedEmp || !date) return alert('Select employee and date');
+    
+    // STRICT GPS VALIDATION
+    if (!liveLocIn && inTime) {
+      return alert("ERROR: In-Time Location not captured! \n\nলোকেশন এখনো পাওয়া যায়নি। অনুগ্রহ করে লাল 'Map Pin' বাটনে ক্লিক করে লোকেশন নিন। লোকেশন ছাড়া এন্ট্রি হবে না।");
+    }
+    
+    // STRICT REMARK VALIDATION
+    const [h, m] = inTime.split(':').map(Number);
+    if ((h > 9 || (h === 9 && m > 15)) && !lateRemark.trim()) {
+      return alert("দুঃখিত! আপনি সকাল ০৯:১৫ এর পরে এসেছেন। \n\nদেরি হওয়ার কারণ (Late Remark) অবশ্যই লিখতে হবে, তা না হলে এন্ট্রি সেভ হবে না।");
+    }
+
+    if (!liveLocOut && outTime) {
+      return alert("ERROR: Out-Time Location not captured! \n\nআউট লোকেশন এখনো পাওয়া যায়নি। অনুগ্রহ করে লাল 'Map Pin' বাটনে ক্লিক করে লোকেশন নিন। লোকেশন ছাড়া এন্ট্রি হবে না।");
+    }
     
     // Final check for user mode: ensure we use current date if not admin
     const captureDate = viewMode === 'admin' ? date : new Date().toISOString().split('T')[0];
@@ -193,6 +223,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
         manual_out_time: outTime || null,
         location_id: location || null,
         status: 'Manual',
+        late_remark: lateRemark || null,
         live_location_in: locInStr,
         live_location_out: locOutStr,
         live_location: locInStr // Keep for backward compatibility
@@ -211,6 +242,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
           manual_out_time: payload.manual_out_time,
           location_id: payload.location_id,
           status: payload.status,
+          late_remark: payload.late_remark,
           live_location: JSON.stringify({
             in: liveLocIn,
             out: liveLocOut
@@ -318,28 +350,31 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
                 {viewMode === 'user' && (
                   <button 
                     onClick={() => handleSetTime('in')}
-                    className="px-2 bg-stone-100 border border-stone-200 text-[10px] font-bold uppercase hover:bg-stone-200 transition-colors rounded-sm"
+                    disabled={locing}
+                    className={`px-4 flex items-center gap-1.5 border rounded-sm text-[10px] font-bold uppercase transition-all ${inTime && liveLocIn ? 'bg-stone-50 border-stone-200 text-stone-400' : 'bg-stone-800 text-white hover:bg-black active:scale-95 shadow-md shadow-stone-100'}`}
                   >
-                    Set
+                    {locing && locingType === 'in' ? <span className="animate-spin text-xs">...</span> : <Clock size={12} />}
+                    {inTime && liveLocIn ? 'RE-SYNC' : 'SET TIME & GPS'}
                   </button>
                 )}
               </div>
               <div className="flex gap-1 items-center relative">
-                 <input 
-                    type="text"
-                    readOnly
-                    placeholder="In location not captured"
-                    className={`w-full border p-2 text-[9px] rounded-sm font-bold outline-none ${liveLocIn ? 'bg-green-50 border-green-200 text-green-700' : 'bg-stone-50 border-stone-200 text-stone-400'}`}
-                    value={liveLocIn ? (liveLocIn.address || `${liveLocIn.lat.toFixed(4)}, ${liveLocIn.lng.toFixed(4)}`) : ''}
-                  />
-                  <button 
-                    type="button"
-                    onClick={() => handleGetLiveLocation('in')}
-                    disabled={locing}
-                    className="p-2 bg-stone-100 border border-stone-200 rounded-sm hover:bg-stone-200"
-                  >
-                    <MapPin size={12} className={liveLocIn ? 'text-green-600' : 'text-stone-400'} />
-                  </button>
+                 <div className="flex-grow flex items-center gap-1 bg-stone-50 border border-stone-200 p-2 text-[9px] rounded-sm overflow-hidden min-h-[34px]">
+                    <MapPin size={12} className={liveLocIn ? 'text-green-600' : 'text-stone-300'} />
+                    <span className={`font-bold truncate ${liveLocIn ? 'text-green-700' : 'text-stone-400 italic'}`}>
+                      {liveLocIn ? (liveLocIn.address || `${liveLocIn.lat.toFixed(4)}, ${liveLocIn.lng.toFixed(4)}`) : 'Location not captured'}
+                    </span>
+                    {locing && locingType === 'in' && <span className="text-[8px] text-amber-600 animate-pulse font-bold ml-auto uppercase shrink-0">Working...</span>}
+                 </div>
+                 {viewMode === 'admin' && (
+                   <button 
+                     type="button"
+                     onClick={() => handleGetLiveLocation('in')}
+                     className="p-2 border border-stone-200 rounded-sm hover:bg-stone-50"
+                   >
+                     <MapPin size={12} className="text-stone-400" />
+                   </button>
+                 )}
               </div>
             </div>
 
@@ -358,28 +393,31 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
                 {viewMode === 'user' && (
                   <button 
                     onClick={() => handleSetTime('out')}
-                    className="px-2 bg-stone-100 border border-stone-200 text-[10px] font-bold uppercase hover:bg-stone-200 transition-colors rounded-sm"
+                    disabled={locing}
+                    className={`px-4 flex items-center gap-1.5 border rounded-sm text-[10px] font-bold uppercase transition-all ${outTime && liveLocOut ? 'bg-stone-50 border-stone-200 text-stone-400' : 'bg-red-600 text-white hover:bg-red-700 active:scale-95 shadow-md shadow-red-50'}`}
                   >
-                    Set
+                    {locing && locingType === 'out' ? <span className="animate-spin text-xs">...</span> : <Clock size={12} />}
+                    {outTime && liveLocOut ? 'RE-SYNC' : 'SET TIME & GPS'}
                   </button>
                 )}
               </div>
               <div className="flex gap-1 items-center relative">
-                 <input 
-                    type="text"
-                    readOnly
-                    placeholder="Out location not captured"
-                    className={`w-full border p-2 text-[9px] rounded-sm font-bold outline-none ${liveLocOut ? 'bg-red-50 border-red-200 text-red-700' : 'bg-stone-50 border-stone-200 text-stone-400'}`}
-                    value={liveLocOut ? (liveLocOut.address || `${liveLocOut.lat.toFixed(4)}, ${liveLocOut.lng.toFixed(4)}`) : ''}
-                  />
-                  <button 
-                    type="button"
-                    onClick={() => handleGetLiveLocation('out')}
-                    disabled={locing}
-                    className="p-2 bg-stone-100 border border-stone-200 rounded-sm hover:bg-stone-200"
-                  >
-                    <MapPin size={12} className={liveLocOut ? 'text-red-600' : 'text-stone-400'} />
-                  </button>
+                 <div className="flex-grow flex items-center gap-1 bg-stone-50 border border-stone-200 p-2 text-[9px] rounded-sm overflow-hidden min-h-[34px]">
+                    <MapPin size={12} className={liveLocOut ? 'text-red-600' : 'text-stone-300'} />
+                    <span className={`font-bold truncate ${liveLocOut ? 'text-red-700' : 'text-stone-400 italic'}`}>
+                      {liveLocOut ? (liveLocOut.address || `${liveLocOut.lat.toFixed(4)}, ${liveLocOut.lng.toFixed(4)}`) : 'Location not captured'}
+                    </span>
+                    {locing && locingType === 'out' && <span className="text-[8px] text-amber-600 animate-pulse font-bold ml-auto uppercase shrink-0">Working...</span>}
+                 </div>
+                 {viewMode === 'admin' && (
+                   <button 
+                     type="button"
+                     onClick={() => handleGetLiveLocation('out')}
+                     className="p-2 border border-stone-200 rounded-sm hover:bg-stone-50"
+                   >
+                     <MapPin size={12} className="text-stone-400" />
+                   </button>
+                 )}
               </div>
             </div>
           </div>
@@ -394,7 +432,46 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
             </select>
           </div>
 
+          {/* Late Remark Field - Shows if clocking in after 09:15 AM */}
+          {(() => {
+            if (!inTime) return false;
+            const [hours, minutes] = inTime.split(':').map(Number);
+            const isLate = hours > 9 || (hours === 9 && minutes > 15);
+            return isLate;
+          })() && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-1 bg-amber-50 p-3 border border-amber-100 rounded-sm"
+            >
+              <label className="text-[10px] uppercase font-bold text-amber-700 flex items-center gap-1">
+                <AlertCircle className="w-3 h-3 text-amber-500" /> অফিসে পৌঁছাতে দেরি হওয়ার সুনির্দিষ্ট কারণ এখানে লিখুন
+              </label>
+              <textarea 
+                placeholder="অফিসে পৌঁছাতে দেরি হওয়ার সুনির্দিষ্ট কারণ এখানে লিখুন..."
+                className="w-full border border-amber-200 p-2 text-xs rounded-sm focus:border-amber-400 outline-none bg-white min-h-[70px]"
+                value={lateRemark}
+                onChange={e => setLateRemark(e.target.value)}
+              />
+            </motion.div>
+          )}
+
           <div className="pt-4 mt-auto">
+            {/* Warning for Missing Location */}
+            {viewMode === 'user' && !liveLocIn && selectedEmp && (
+              <div className="bg-red-50 border border-red-100 p-2.5 rounded-sm mb-3 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <div className="flex flex-col gap-1">
+                  <p className="text-[10px] text-red-700 font-bold leading-tight">
+                    GPS লোকেশন এখনো নেওয়া হয়নি! নিচের MAP PIN বাটনে ক্লিক করে লোকেশন নিন।
+                  </p>
+                  <p className="text-[9px] text-red-600 leading-tight">
+                    লোকেশন না আসলে মেসেঞ্জার চ্যাট বাবল (Chat Head) বা অন্য অ্যাপ বন্ধ করুন।
+                  </p>
+                </div>
+              </div>
+            )}
+
             <AnimatePresence mode="wait">
               {saveStatus === 'success' ? (
                 <motion.div 
@@ -420,11 +497,11 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={handleSubmit} 
-                  disabled={fetching || saving}
+                  disabled={fetching || saving || (viewMode === 'user' && !liveLocIn)}
                   className="w-full bg-stone-800 text-white p-3 text-xs font-bold uppercase hover:bg-stone-900 shadow-lg shadow-stone-200 disabled:opacity-50 flex items-center justify-center gap-2 transition-all rounded-sm group"
                 >
                   <Save className={`w-4 h-4 transition-transform ${(saving || (locing && viewMode === 'user')) ? 'animate-spin' : 'group-hover:rotate-12'}`} />
-                  {saving ? 'Processing...' : fetching ? 'Please wait...' : (locing && viewMode === 'user') ? 'Syncing Location...' : 'Submit Attendance'}
+                  {saving ? 'Processing...' : fetching ? 'Please wait...' : (locing && viewMode === 'user') ? 'Syncing Location...' : (viewMode === 'user' && !liveLocIn) ? 'GPS Required' : 'Submit Attendance'}
                 </motion.button>
               )}
             </AnimatePresence>

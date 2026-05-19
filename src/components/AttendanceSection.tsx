@@ -19,6 +19,7 @@ interface AttendanceRecord {
   live_location?: string;
   live_location_in?: string;
   live_location_out?: string;
+  late_remark?: string;
   idNumber: string;
 }
 
@@ -39,7 +40,7 @@ export default function AttendanceSection({ attendance, employees, locations, vi
         const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === filterDate);
         return {
             emp,
-            record: record || { manualInTime: '', manualOutTime: '', sysInTime: '', sysOutTime: '', locationId: '', live_location: '', live_location_in: '', live_location_out: '' }
+            record: record || { manualInTime: '', manualOutTime: '', sysInTime: '', sysOutTime: '', locationId: '', live_location: '', live_location_in: '', live_location_out: '', late_remark: '' }
         };
     }).filter(item => filterEmp === '' || item.emp.id === filterEmp);
 
@@ -77,7 +78,8 @@ export default function AttendanceSection({ attendance, employees, locations, vi
                         if (loc && loc.lat) return `${Number(loc.lat).toFixed(4)}, ${Number(loc.lng).toFixed(4)}`;
                         return '-';
                     } catch { return '-'; }
-                })()
+                })(),
+                'Late Remark': (item.record as any).late_remark || '-'
             };
             if (viewMode === 'admin') {
                 (base as any)['Live Location'] = item.record.live_location || '-';
@@ -96,7 +98,7 @@ export default function AttendanceSection({ attendance, employees, locations, vi
         doc.text(`Attendance Report: ${filterDate}`, 14, 15);
         
         const head = [
-            ['ID', 'Name', 'In Time', 'Out Time', 'Location', 'IN GPS Address', 'OUT GPS Address', ...(viewMode === 'admin' ? ['Live Loc'] : [])]
+            ['ID', 'Name', 'In Time', 'Out Time', 'Location', 'Late Remark', 'IN GPS Address', ...(viewMode === 'admin' ? ['Live Loc'] : [])]
         ];
         const body = renderData.map(item => [
             item.emp.id,
@@ -104,6 +106,7 @@ export default function AttendanceSection({ attendance, employees, locations, vi
             item.record.manualInTime || item.record.sysInTime || '-',
             item.record.manualOutTime || item.record.sysOutTime || '-',
             locations.find(l => l.id === (item.record as any).locationId)?.name || (item.record as any).locationId || '-',
+            (item.record as any).late_remark || '-',
             (() => {
                 try {
                     const raw = item.record.live_location_in || item.record.live_location || '{}';
@@ -174,6 +177,7 @@ export default function AttendanceSection({ attendance, employees, locations, vi
                             <th className="px-3 py-3">In Time</th>
                             <th className="px-3 py-3">Out Time</th>
                             <th className="px-3 py-3">Location</th>
+                            <th className="px-3 py-3">Remarks</th>
                             <th className="px-3 py-3">IN Address</th>
                             <th className="px-3 py-3">OUT Address</th>
                             {viewMode === 'admin' && <th className="px-3 py-3 text-center">Live Loc</th>}
@@ -238,6 +242,17 @@ function EditableRow({ item, date, locations, onSave, viewMode }: { item: any, d
                         <option key={loc.id} value={loc.id}>{loc.name}</option>
                     ))}
                 </select>
+            </td>
+            <td className="px-3 py-3">
+                <div className="max-w-[120px]">
+                    {(item.record as any).late_remark ? (
+                        <span className="text-[10px] text-red-600 font-bold leading-tight line-clamp-2 italic">
+                            {(item.record as any).late_remark}
+                        </span>
+                    ) : (
+                        <span className="text-stone-300 italic text-[9px]">-</span>
+                    )}
+                </div>
             </td>
             <td className="px-3 py-3">
                 <div className="max-w-[150px]">
