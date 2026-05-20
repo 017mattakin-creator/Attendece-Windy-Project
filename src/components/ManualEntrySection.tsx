@@ -175,8 +175,8 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
         let bnMsg = "লোকেশন পাওয়া যায়নি। ";
         
         if (error.code === 1) {
-           msg = "Permission denied. Please allow location permission. If you see 'Close bubbles/overlays', please close Facebook Messenger 'Chat Heads' or other floating apps and try again.";
-           bnMsg += "\n\nফেসবুক মেসেঞ্জার বা অন্য কোনো অ্যাপের 'পপ-আপ' বা 'বাবল' চালু থাকলে তা বন্ধ করে আবার চেষ্টা করুন। ব্রাউজারের লোকেশন পারমিশন এলাউ করুন।";
+           msg = "Permission denied. Please allow location permission.";
+           bnMsg += "\n\nঅনুগ্রহ করে আপনার ব্রাউজার এবং ফোনের জিপিএস (GPS) লোকেশন পারমিশন চালু করুন এবং পুনরায় চেষ্টা করুন।";
         } else if (error.code === 3) {
            msg = "Location request timed out.";
            bnMsg += "\nসময় শেষ হয়ে গেছে (Timeout)! ইন্টারেনেট ঠিক আছে কিনা দেখে নিন।";
@@ -463,10 +463,10 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
                 <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                 <div className="flex flex-col gap-1">
                   <p className="text-[10px] text-red-700 font-bold leading-tight">
-                    GPS লোকেশন এখনো নেওয়া হয়নি! নিচের MAP PIN বাটনে ক্লিক করে লোকেশন নিন।
+                    GPS লোকেশন এখনো নেওয়া হয়নি! নিচের 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নিন।
                   </p>
                   <p className="text-[9px] text-red-600 leading-tight">
-                    লোকেশন না আসলে মেসেঞ্জার চ্যাট বাবল (Chat Head) বা অন্য অ্যাপ বন্ধ করুন।
+                    লোকেশন না আসলে অনুগ্রহ করে ব্রাউজার ও ফোনের জিপিএস (GPS/Location) পারমিশন চালু করুন।
                   </p>
                 </div>
               </div>
