@@ -237,12 +237,6 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
       setLiveLocIn(finalLocIn);
     }
     
-    // STRICT REMARK VALIDATION
-    const [h, m] = inTime.split(':').map(Number);
-    if ((h > 9 || (h === 9 && m > 15)) && !lateRemark.trim()) {
-      return alert("দুঃখিত! আপনি সকাল ০৯:১৫ এর পরে এসেছেন। \n\nদেরি হওয়ার কারণ (Late Remark) অবশ্যই লিখতে হবে, তা না হলে এন্ট্রি সেভ হবে না।");
-    }
-
     let finalLocOut = liveLocOut;
     if (!finalLocOut && outTime && viewMode === 'user') {
       const attempts = locAttempts['out'];
@@ -497,10 +491,10 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
               className="space-y-1 bg-amber-50 p-3 border border-amber-100 rounded-sm"
             >
               <label className="text-[10px] uppercase font-bold text-amber-700 flex items-center gap-1">
-                <AlertCircle className="w-3 h-3 text-amber-500" /> অফিসে পৌঁছাতে দেরি হওয়ার সুনির্দিষ্ট কারণ এখানে লিখুন
+                <AlertCircle className="w-3 h-3 text-amber-500" /> অফিসে পৌঁছাতে দেরি হওয়ার কারণ (ঐচ্ছিক)
               </label>
               <textarea 
-                placeholder="অফিসে পৌঁছাতে দেরি হওয়ার সুনির্দিষ্ট কারণ এখানে লিখুন..."
+                placeholder="দেরি হওয়ার কারণ এখানে লিখতে পারেন (বাধ্যতামূলক নয়)..."
                 className="w-full border border-amber-200 p-2 text-xs rounded-sm focus:border-amber-400 outline-none bg-white min-h-[70px]"
                 value={lateRemark}
                 onChange={e => setLateRemark(e.target.value)}
