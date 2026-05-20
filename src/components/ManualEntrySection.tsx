@@ -487,156 +487,26 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
 
           {/* 📍 GEOLOCATION & GPS ALLOW HELPER PANEL */}
           {permissionStatus === 'granted' ? (
-            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-2.5 rounded-sm flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-              <p className="text-[10px] font-bold">জি-পি-এস (GPS) লোকেশন সচল রয়েছে। নিচে বাটন চেপে হাজিরা সম্পন্ন করুন।</p>
+            <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 p-2 rounded-sm flex items-center gap-1.5 mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <p className="text-[10px] font-semibold">জি-পি-এস (GPS) সংযুক্ত রয়েছে ✓</p>
             </div>
           ) : (
-            <div className="border border-amber-200 rounded-sm bg-gradient-to-b from-amber-50 to-white overflow-hidden shadow-xs">
-              <div className="bg-amber-100/50 p-2.5 flex items-center justify-between border-b border-amber-150">
-                <div className="flex items-center gap-2">
-                  <Compass className="w-4 h-4 text-amber-600 animate-spin" style={{ animationDuration: '6s' }} />
-                  <h3 className="text-[11px] font-bold text-amber-950">লোকেশন পারমিশন ও জিপিএস এলার্ট</h3>
-                </div>
-                <button 
-                  type="button"
-                  onClick={() => setShowHelp(!showHelp)}
-                  className="text-[9px] font-bold bg-white text-stone-700 hover:text-stone-900 border border-stone-200 px-2 py-0.5 rounded-sm active:scale-95 transition-all"
-                >
-                  {showHelp ? '▲ বিশদ বিবরণ বন্ধ' : '▼ বিশদ বিবরণ দেখুন'}
-                </button>
-              </div>
-
-              <div className="p-3.5 flex flex-col gap-3">
-                <div className="text-center py-1">
-                  <p className="text-[12px] text-stone-900 leading-snug font-bold mb-2">
-                    ফোনে লোকেশন অন করতে নিচের বাটনে চাপ দিন এবং আসা পপ-আপ স্ক্রিনে <span className="text-blue-600">"Allow" / "অনুমতি দিন"</span> সিলেক্ট করুন:
-                  </p>
-                  
-                  {/* DIRECT NATIVE PROMPT TRIGGER BUTTON */}
-                  <button
-                    type="button"
-                    onClick={triggerNativePermissionPrompt}
-                    className="w-full bg-amber-500 hover:bg-amber-600 active:scale-97 text-stone-950 font-black py-3 px-4 rounded-sm text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md animate-pulse hover:animate-none transition-all"
-                    style={{ animationDuration: '2s' }}
-                  >
-                    <Compass className="w-4 h-4 animate-spin text-stone-950" style={{ animationDuration: '4s' }} />
-                    লোকেশন পারমিশন অন করার পপ-আপ চালু করুন
-                  </button>
-                  <p className="text-[9px] text-amber-800 font-semibold mt-1.5">
-                    * বাটনটিতে ক্লিক করলে ব্রাউজার/ফোনের নিজস্ব জিপিএস এপ্রুভাল মেনু পপ-আপ স্ক্রিনে ভেসে আসবে।
-                  </p>
-                </div>
-
-                <div className="border-t border-stone-100 pt-3">
-                  <div className="flex flex-col gap-2">
-                    {/* ACCESSIBLE EASY REMEDY */}
-                    <div className="bg-stone-50 p-2.5 border border-stone-200 rounded-sm">
-                      <div className="flex items-start gap-1.5">
-                        <span className="bg-blue-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-xs shrink-0">উত্তম উপায়</span>
-                        <div className="flex-grow">
-                          <p className="text-[11px] font-bold text-stone-900 leading-tight mb-1">
-                            নতুন ট্যাবে ওপেন (যদি পপআপ না আসে)
-                          </p>
-                          <p className="text-[9px] text-stone-600 leading-normal mb-2">
-                            প্রিভিউ ফ্রেমে থাকার কারণে মাঝেমধ্যে সরাসরি পপ-আপ বক্স আসে না। নিচের নীল বাটনে চাপ দিলে ১ সেকেন্ডে অরিজিনাল ট্যাবে ওপেন হবে এবং পপ-আপ সাথে সাথে কাজ করবে।
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => window.open(window.location.href, '_blank')}
-                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded-xs text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
-                          >
-                            <ExternalLink size={11} /> নতুন ট্যাবে ফুল-স্ক্রিন অ্যাপ ওপেন করুন
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {showHelp && (
-                      <div className="flex flex-col gap-2 mt-1">
-                        {/* STEP 2: CHROME MOBILE SETTINGS */}
-                        <div className="bg-white p-2.5 border border-stone-200 rounded-sm">
-                          <div className="flex items-start gap-1.5">
-                            <span className="bg-stone-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-sm shrink-0">ধাপ ২</span>
-                            <div>
-                              <p className="text-[11px] font-bold text-stone-900 leading-tight mb-1">
-                                ক্রোম ফোনের নিজস্ব লোকেশন সেটিং
-                              </p>
-                              <ul className="text-[9px] text-stone-600 space-y-1 list-decimal list-inside pl-0.5 leading-relaxed">
-                                <li>ফোনের উপর থেকে নোটিফিকেশন বার নামিয়ে <strong>GPS বা Location</strong> অন করুন।</li>
-                                <li>ফোনের ক্রোম ব্রাউজারের ডানপাশের <strong>৩টি ডট (⋮)</strong> ➔ <strong>Settings (সেটিংস)</strong> এ যান।</li>
-                                <li>সেখান থেকে <strong>Site Settings (সাইট সেটিংস)</strong> ➔ <strong>Location (লোকেশন)</strong> এ চাপ দিন এবং Blocked তালিকায় অ্যাপটি থাকলে সেটিতে ক্লিক করে <strong>Allow (অনুমতি দিন)</strong> করুন।</li>
-                              </ul>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* STEP 3: DESKTOP CHROME SETTINGS */}
-                        <div className="bg-white p-2.5 border border-stone-200 rounded-sm">
-                          <div className="flex items-start gap-1.5">
-                            <span className="bg-stone-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-sm shrink-0">ধাপ ৩</span>
-                            <div>
-                              <p className="text-[11px] font-bold text-stone-900 leading-tight mb-1">
-                                কম্পিউটার/ডেস্কটপে ক্রোম সেটিংস
-                              </p>
-                              <p className="text-[9px] text-stone-600 leading-relaxed">
-                                ব্রাউজারের উপরে অ্যাড্রেস বারের বাম পাশে অবস্থিত <strong>তালা আইকন (🔒)</strong> ক্লিক করুন এবং <strong>Location</strong> অপশনটি <strong>Allow</strong> করে পুনরায় দিন।
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* DYNAMIC GPS TESTER */}
-                        <div className="bg-white p-2.5 border border-stone-200 rounded-sm">
-                          <div className="flex items-center justify-between border-b border-stone-100 pb-1.5 mb-1.5">
-                            <div className="flex items-center gap-1.5">
-                              <RefreshCw size={11} className={`text-amber-600 ${testStatus === 'checking' ? 'animate-spin' : ''}`} />
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 font-sans">রিয়েল-টাইম জিপিএস টেস্টার</span>
-                            </div>
-                            <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                              testStatus === 'granted' ? 'bg-green-100 text-green-800' :
-                              testStatus === 'denied' ? 'bg-red-100 text-red-800' :
-                              testStatus === 'checking' ? 'bg-amber-100 text-amber-800' :
-                              'bg-stone-100 text-stone-600'
-                            }`}>
-                              {testStatus === 'idle' ? 'Ready' :
-                               testStatus === 'checking' ? 'Checking...' :
-                               testStatus === 'granted' ? 'অ্যাক্টিভ ✓' :
-                               testStatus === 'denied' ? 'ব্লকড ✗' : 'Ready'}
-                            </span>
-                          </div>
-                          
-                          <div className="flex flex-col gap-1.5">
-                            <p className="text-[9px] text-stone-600 leading-snug">
-                              লোকেশন ঠিকমতো কাজ করছে কি না তা নিশ্চিত করতে নিচের টেস্টার বাটনে চাপ দিন:
-                            </p>
-                            
-                            <button
-                              type="button"
-                              onClick={testGeolocation}
-                              disabled={testStatus === 'checking'}
-                              className="w-full bg-stone-800 hover:bg-black text-white text-[9px] font-bold py-1.5 px-2 rounded-xs uppercase tracking-wide transition-all active:scale-95 disabled:opacity-50"
-                            >
-                              {testStatus === 'checking' ? 'যাচাই করা হচ্ছে...' : 'লোকেশন সংযোগ পরীক্ষা করুন'}
-                            </button>
-
-                            {testStatus === 'granted' && (
-                              <p className="text-[9px] text-green-700 font-bold bg-green-50 p-1.5 border border-green-100 rounded-xs">
-                                অভিনন্দন! আপনার ব্রাউজার লোকেশন সঠিকভাবে অ্যাক্সেস করতে পারছে।
-                              </p>
-                            )}
-                            {testStatus === 'denied' && (
-                              <p className="text-[9px] text-red-700 font-bold bg-red-50 p-1.5 border border-red-100 rounded-xs">
-                                ব্যর্থ! জিপিএস বা ব্রাউজার পারমিশন ব্লক করা আছে। উর্ধ্বতন পদ্ধতিতে জিপিএস অন করুন।
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+            <div className="bg-amber-50 border border-amber-100 p-2.5 rounded-sm mb-2 text-stone-850">
+              <p className="text-[10px] font-bold text-amber-900 mb-1 flex items-center gap-1">
+                <Compass className="w-3.5 h-3.5 animate-spin text-amber-600" style={{ animationDuration: '4s' }} /> 
+                লোকেশন পারমিশন অন করুন
+              </p>
+              <p className="text-[9px] text-stone-600 leading-tight mb-2">
+                হাজিরা দেওয়ার জন্য সঠিক জিপিয়াস (GPS) লোকেশন প্রয়োজন। দয়া করে নিচের বাটনে চাপ দিন এবং ব্রাউজার পারমিশন চাইলে 'Allow' বা 'অনুমতি দিন' সিলেক্ট করুন।
+              </p>
+              <button
+                type="button"
+                onClick={triggerNativePermissionPrompt}
+                className="w-full bg-amber-500 hover:bg-amber-600 font-extrabold text-stone-950 py-1.5 px-3 rounded-xs text-[10px] flex items-center justify-center gap-1.5 transition-all active:scale-97 shadow-xs"
+              >
+                <Compass size={11} className="animate-pulse" /> লোকেশন পারমিশন প্রম্পট চালু করুন
+              </button>
             </div>
           )}
           
