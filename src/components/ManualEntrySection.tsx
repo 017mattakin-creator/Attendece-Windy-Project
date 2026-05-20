@@ -192,7 +192,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     
     // STRICT GPS VALIDATION
     if (!liveLocIn && inTime) {
-      return alert("ERROR: In-Time Location not captured! \n\nলোকেশন এখনো পাওয়া যায়নি। অনুগ্রহ করে লাল 'Map Pin' বাটনে ক্লিক করে লোকেশন নিন। লোকেশন ছাড়া এন্ট্রি হবে না।");
+      return alert("ERROR: In-Time Location not captured! \n\nলোকেশন এখনো পাওয়া যায়নি। অনুগ্রহ করে 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নিন। লোকেশন ছাড়া এন্ট্রি হবে না।");
     }
     
     // STRICT REMARK VALIDATION
@@ -202,7 +202,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     }
 
     if (!liveLocOut && outTime) {
-      return alert("ERROR: Out-Time Location not captured! \n\nআউট লোকেশন এখনো পাওয়া যায়নি। অনুগ্রহ করে লাল 'Map Pin' বাটনে ক্লিক করে লোকেশন নিন। লোকেশন ছাড়া এন্ট্রি হবে না।");
+      return alert("ERROR: Out-Time Location not captured! \n\nআউট লোকেশন এখনো পাওয়া যায়নি। অনুগ্রহ করে 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নিন। লোকেশন ছাড়া এন্ট্রি হবে না।");
     }
     
     // Final check for user mode: ensure we use current date if not admin
