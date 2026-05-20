@@ -34,6 +34,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
   const [lateRemark, setLateRemark] = useState('');
   const [locing, setLocing] = useState(false);
   const [locingType, setLocingType] = useState<'in' | 'out' | null>(null);
+  const [locAttempts, setLocAttempts] = useState<Record<'in' | 'out', number>>({ in: 0, out: 0 });
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -56,6 +57,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
       setOutTime('');
       setLocation('');
       setLateRemark('');
+      setLocAttempts({ in: 0, out: 0 });
     }
   }, [selectedEmp]);
 
@@ -137,62 +139,102 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     setLocing(true);
     setLocingType(type);
     
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
-        if (type === 'in') setLiveLocIn(coords);
-        else setLiveLocOut(coords);
-        
-        // Fetch address (Reverse Geocoding)
-        fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}&zoom=18&addressdetails=1`)
-          .then(res => res.json())
-          .then(data => {
-            if (data && data.address) {
-              const addr = data.address;
-              const village = addr.village || addr.suburb || addr.neighbourhood || addr.residential || addr.industrial || addr.road || '';
-              const town = addr.city || addr.town || addr.municipality || addr.subdistrict || '';
-              const district = addr.state_district || addr.district || addr.county || '';
-              
-              const formattedParts = [village, town, district].filter(p => p && p.length > 1);
-              const address = formattedParts.join(', ');
-              const finalLoc = { ...coords, address: address || data.display_name };
-              
-              if (type === 'in') setLiveLocIn(finalLoc);
-              else setLiveLocOut(finalLoc);
-            }
-          })
-          .catch(err => console.error("Geocoding error:", err))
-          .finally(() => {
-            setLocing(false);
-            setLocingType(null);
-          });
-      },
-      (error) => {
-        console.error("Loc error:", error);
-        setLocing(false);
-        setLocingType(null);
-        let msg = "Location capture failed.";
-        let bnMsg = "লোকেশন পাওয়া যায়নি। ";
-        
-        if (error.code === 1) {
-           msg = "Permission denied. Please allow location permission.";
-           bnMsg += "\n\nঅনুগ্রহ করে আপনার ব্রাউজার এবং ফোনের জিপিএস (GPS) লোকেশন পারমিশন চালু করুন এবং পুনরায় চেষ্টা করুন।";
-        } else if (error.code === 3) {
-           msg = "Location request timed out.";
-           bnMsg += "\nসময় শেষ হয়ে গেছে (Timeout)! ইন্টারেনেট ঠিক আছে কিনা দেখে নিন।";
+    const handleSuccess = (position: GeolocationPosition) => {
+      const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
+      if (type === 'in') setLiveLocIn(coords);
+      else setLiveLocOut(coords);
+      
+      // Fetch address (Reverse Geocoding)
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}&zoom=18&addressdetails=1`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.address) {
+            const addr = data.address;
+            const village = addr.village || addr.suburb || addr.neighbourhood || addr.residential || addr.industrial || addr.road || '';
+            const town = addr.city || addr.town || addr.municipality || addr.subdistrict || '';
+            const district = addr.state_district || addr.district || addr.county || '';
+            
+            const formattedParts = [village, town, district].filter(p => p && p.length > 1);
+            const address = formattedParts.join(', ');
+            const finalLoc = { ...coords, address: address || data.display_name };
+            
+            if (type === 'in') setLiveLocIn(finalLoc);
+            else setLiveLocOut(finalLoc);
+          }
+        })
+        .catch(err => console.error("Geocoding error:", err))
+        .finally(() => {
+          setLocing(false);
+          setLocingType(null);
+          setLocAttempts(prev => ({ ...prev, [type]: 0 }));
+        });
+    };
+
+    const handleFailure = (error: GeolocationPositionError) => {
+      console.error("Loc error:", error);
+      setLocing(false);
+      setLocingType(null);
+      
+      let reason = "জিপিএস পারমিশন অফ / লোড হচ্ছে না";
+      if (error.code === 1) {
+         reason = "লোকেশন পারমিশন ব্লকড";
+      } else if (error.code === 3) {
+         reason = "লোকেশন টাইমআউট (লেট)";
+      } else if (error.code === 2) {
+         reason = "ডিভাইস জিপিএস বন্ধ";
+      }
+      
+      setLocAttempts(prev => {
+        const nextCount = prev[type] + 1;
+        if (nextCount >= 2) {
+          alert(`লোকেশন পাওয়া যায়নি (${reason})।\n\nপর পর ২ বার চেষ্টা করা হয়েছে কিন্তু লোকেশন পাওয়া যায়নি।\n\nহাজিরা সচল রাখতে সাময়িকভাবে লোকেশন ছাড়াই সরাসরি সাবমিট করার অনুমতি দেওয়া হলো। 'Submit Attendance' বাটনে চাপ দিয়ে হাজিরা দিন।`);
+          
+          const fallbackLoc = {
+            lat: 0,
+            lng: 0,
+            address: `${reason} (হাজিরা দেওয়া যাবে)`
+          };
+          if (type === 'in') setLiveLocIn(fallbackLoc);
+          else setLiveLocOut(fallbackLoc);
+        } else {
+          alert(`লোকেশন পাওয়া যায়নি (${reason})।\n\nঅনুগ্রহ করে ফোনের জিপিএস (GPS/Location) অন করুন এবং ব্রাউজারে লোকেশন পারমিশন Allow করে পুনরায় চেষ্টা করুন (প্রচেষ্টা ${nextCount}/২)।`);
         }
-        alert(`${msg}\n\n${bnMsg}`);
+        return { ...prev, [type]: nextCount };
+      });
+    };
+
+    // Attempt high-accuracy GPS tracking
+    navigator.geolocation.getCurrentPosition(
+      (pos) => handleSuccess(pos),
+      (err) => {
+        console.warn("High-accuracy GPS tracking failed, falling back to standard speed-opt tracking...", err);
+        // Fallback to low-accuracy (uses tower/Wi-Fi/IP - much faster and works inside buildings)
+        navigator.geolocation.getCurrentPosition(
+          (pos) => handleSuccess(pos),
+          (err2) => handleFailure(err2),
+          { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 3500, maximumAge: 0 }
     );
   };
+
 
   const handleSubmit = async () => {
     if (!selectedEmp || !date) return alert('Select employee and date');
     
-    // STRICT GPS VALIDATION
-    if (!liveLocIn && inTime) {
-      return alert("ERROR: In-Time Location not captured! \n\nলোকেশন এখনো পাওয়া যায়নি। অনুগ্রহ করে 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নিন। লোকেশন ছাড়া এন্ট্রি হবে না।");
+    let finalLocIn = liveLocIn;
+    if (!finalLocIn && inTime && viewMode === 'user') {
+      const attempts = locAttempts['in'];
+      if (attempts < 2) {
+        return alert("আপনার ইন-টাইম জিপিএস (GPS) লোকেশন নেওয়া হয়নি!\n\nঅনুগ্রহ করে অন্তত ১ বা ২ বার 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নেওয়ার চেষ্টা করুন। ২ বার ব্যর্থ হলে এমনিতেই সাবমিট করতে পারবেন।");
+      }
+      finalLocIn = {
+        lat: 0,
+        lng: 0,
+        address: "লোকেশন স্কিপ করা হয়েছে (জিপিএস অফ)"
+      };
+      setLiveLocIn(finalLocIn);
     }
     
     // STRICT REMARK VALIDATION
@@ -201,8 +243,18 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
       return alert("দুঃখিত! আপনি সকাল ০৯:১৫ এর পরে এসেছেন। \n\nদেরি হওয়ার কারণ (Late Remark) অবশ্যই লিখতে হবে, তা না হলে এন্ট্রি সেভ হবে না।");
     }
 
-    if (!liveLocOut && outTime) {
-      return alert("ERROR: Out-Time Location not captured! \n\nআউট লোকেশন এখনো পাওয়া যায়নি। অনুগ্রহ করে 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নিন। লোকেশন ছাড়া এন্ট্রি হবে না।");
+    let finalLocOut = liveLocOut;
+    if (!finalLocOut && outTime && viewMode === 'user') {
+      const attempts = locAttempts['out'];
+      if (attempts < 2) {
+        return alert("আপনার আউট-টাইম জিপিএস (GPS) লোকেশন নেওয়া হয়নি!\n\nঅনুগ্রহ করে অন্তত ১ বা ২ বার 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নেওয়ার চেষ্টা করুন। ২ বার ব্যর্থ হলে এমনিতেই সাবমিট করতে পারবেন।");
+      }
+      finalLocOut = {
+        lat: 0,
+        lng: 0,
+        address: "লোকেশন স্কিপ করা হয়েছে (জিপিএস অফ)"
+      };
+      setLiveLocOut(finalLocOut);
     }
     
     // Final check for user mode: ensure we use current date if not admin
@@ -212,8 +264,8 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     setSaveStatus('idle');
     try {
       // Structure the data beautifully
-      const locInStr = liveLocIn ? JSON.stringify(liveLocIn) : null;
-      const locOutStr = liveLocOut ? JSON.stringify(liveLocOut) : null;
+      const locInStr = finalLocIn ? JSON.stringify(finalLocIn) : null;
+      const locOutStr = finalLocOut ? JSON.stringify(finalLocOut) : null;
 
       const payload: any = {
         employee_id: String(selectedEmp.id).trim(),
@@ -244,8 +296,8 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
           status: payload.status,
           late_remark: payload.late_remark,
           live_location: JSON.stringify({
-            in: liveLocIn,
-            out: liveLocOut
+            in: finalLocIn,
+            out: finalLocOut
           })
         };
         const fallbackResult = await supabase.from('attendance').upsert([legacyPayload], { onConflict: 'employee_id,date_iso' });
@@ -459,14 +511,14 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
           <div className="pt-4 mt-auto">
             {/* Warning for Missing Location */}
             {viewMode === 'user' && !liveLocIn && selectedEmp && (
-              <div className="bg-red-50 border border-red-100 p-2.5 rounded-sm mb-3 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <div className="bg-amber-50 border border-amber-100 p-2.5 rounded-sm mb-3 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div className="flex flex-col gap-1">
-                  <p className="text-[10px] text-red-700 font-bold leading-tight">
-                    GPS লোকেশন এখনো নেওয়া হয়নি! নিচের 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নিন।
+                  <p className="text-[10px] text-amber-800 font-bold leading-tight">
+                    GPS লোকেশন নেওয়ার জন্য নিচের 'SET TIME & GPS' বাটনে চাপ দিন।
                   </p>
-                  <p className="text-[9px] text-red-600 leading-tight">
-                    লোকেশন না আসলে অনুগ্রহ করে ব্রাউজার ও ফোনের জিপিএস (GPS/Location) পারমিশন চালু করুন।
+                  <p className="text-[9px] text-amber-600 leading-tight">
+                    ডিভাইসে জিপিএস বন্ধ থাকলে বা লোড না হলে সরাসরি সাবমিট করতে পারবেন।
                   </p>
                 </div>
               </div>
@@ -497,11 +549,11 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={handleSubmit} 
-                  disabled={fetching || saving || (viewMode === 'user' && !liveLocIn)}
+                  disabled={fetching || saving}
                   className="w-full bg-stone-800 text-white p-3 text-xs font-bold uppercase hover:bg-stone-900 shadow-lg shadow-stone-200 disabled:opacity-50 flex items-center justify-center gap-2 transition-all rounded-sm group"
                 >
                   <Save className={`w-4 h-4 transition-transform ${(saving || (locing && viewMode === 'user')) ? 'animate-spin' : 'group-hover:rotate-12'}`} />
-                  {saving ? 'Processing...' : fetching ? 'Please wait...' : (locing && viewMode === 'user') ? 'Syncing Location...' : (viewMode === 'user' && !liveLocIn) ? 'GPS Required' : 'Submit Attendance'}
+                  {saving ? 'Processing...' : fetching ? 'Please wait...' : (locing && viewMode === 'user') ? 'Syncing Location...' : 'Submit Attendance'}
                 </motion.button>
               )}
             </AnimatePresence>
