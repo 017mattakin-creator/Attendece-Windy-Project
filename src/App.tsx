@@ -109,6 +109,18 @@ export default function App() {
 
   useEffect(() => {
     fetchData();
+    // Prompt for Geolocation permission immediately upon entering the site
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          console.log("Initial geolocation permitted on entry:", pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => {
+          console.warn("Initial geolocation prompt handled or denied on load:", err);
+        },
+        { enableHighAccuracy: false, timeout: 10000 }
+      );
+    }
   }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);

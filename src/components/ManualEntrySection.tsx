@@ -61,6 +61,66 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   const [showHelp, setShowHelp] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'checking' | 'granted' | 'denied' | 'prompt' | 'unsupported'>('idle');
+  const [permissionStatus, setPermissionStatus] = useState<'granted' | 'denied' | 'prompt' | 'unknown'>('unknown');
+  const [hasAttemptedAutoLoc, setHasAttemptedAutoLoc] = useState(false);
+
+  // Query location permissions on load and update state
+  React.useEffect(() => {
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'geolocation' })
+        .then((status) => {
+          setPermissionStatus(status.state as any);
+          status.onchange = () => {
+            setPermissionStatus(status.state as any);
+          };
+        })
+        .catch((err) => {
+          console.warn("Permissions query error:", err);
+        });
+    }
+  }, []);
+
+  const triggerNativePermissionPrompt = () => {
+    if (!navigator.geolocation) {
+      setPermissionStatus('unknown');
+      return;
+    }
+    
+    setLocing(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setPermissionStatus('granted');
+        setLocing(false);
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        // Instantly save as live location to fulfill the user's focus
+        if (!liveLocIn) {
+          setLiveLocIn(coords);
+          // Reverse lookup address
+          fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}&zoom=18&addressdetails=1`)
+            .then(res => res.json())
+            .then(data => {
+              if (data && data.address) {
+                const addr = data.address;
+                const village = addr.village || addr.suburb || addr.neighbourhood || addr.residential || addr.road || '';
+                const town = addr.city || addr.town || addr.municipality || '';
+                const district = addr.state_district || addr.district || '';
+                const formatted = [village, town, district].filter(p => p).join(', ');
+                setLiveLocIn({ ...coords, address: formatted || data.display_name });
+              }
+            }).catch(e => console.error(e));
+        }
+      },
+      (err) => {
+        setLocing(false);
+        if (err.code === 1) {
+          setPermissionStatus('denied');
+        } else {
+          setPermissionStatus('prompt');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+    );
+  };
 
   const testGeolocation = () => {
     if (!navigator.geolocation) {
@@ -71,10 +131,14 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setTestStatus('granted');
+        setPermissionStatus('granted');
       },
       (err) => {
         console.warn("Test location fail:", err);
         setTestStatus('denied');
+        if (err.code === 1) {
+          setPermissionStatus('denied');
+        }
       },
       { enableHighAccuracy: false, timeout: 4000 }
     );
@@ -101,19 +165,22 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
         setOutTime('');
         setLocation('');
         setLateRemark('');
+        setHasAttemptedAutoLoc(false);
       }
       prevEmpIdRef.current = empId;
     } else {
       prevEmpIdRef.current = null;
+      setHasAttemptedAutoLoc(false);
     }
   }, [selectedEmp]);
 
-  // Automatically capture IN location for users when ready
+  // Automatically capture IN location for users when ready and avoid infinite retry loops
   React.useEffect(() => {
-    if (selectedEmp && viewMode === 'user' && !fetching && !liveLocIn && !locing && !inTime) {
+    if (selectedEmp && viewMode === 'user' && !fetching && !liveLocIn && !locing && !inTime && !hasAttemptedAutoLoc) {
+      setHasAttemptedAutoLoc(true);
       handleGetLiveLocation('in');
     }
-  }, [selectedEmp, viewMode, fetching, liveLocIn, locing, inTime]);
+  }, [selectedEmp, viewMode, fetching, liveLocIn, locing, inTime, hasAttemptedAutoLoc]);
 
   React.useEffect(() => {
     const fetchExisting = async () => {
@@ -187,6 +254,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     setLocingType(type);
     
     const handleSuccess = (position: GeolocationPosition) => {
+      setPermissionStatus('granted');
       const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
       if (type === 'in') setLiveLocIn(coords);
       else setLiveLocOut(coords);
@@ -229,6 +297,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
       let reason = "জিপিএস পারমিশন অফ / লোড হচ্ছে না";
       if (error.code === 1) {
          reason = "লোকেশন পারমিশন ব্লকড";
+         setPermissionStatus('denied');
       } else if (error.code === 3) {
          reason = "লোকেশন টাইমআউট (লেট)";
       } else if (error.code === 2) {
@@ -410,147 +479,166 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
 
           {viewMode === 'user' && (
             <div className="bg-amber-50 p-3 border border-amber-100 rounded-sm mb-2">
-              <p className="text-[10px] text-amber-700 leading-relaxed font-medium">
+              <p className="text-[10px] text-amber-700 leading-relaxed font-semibold">
                 <strong>Anti-Fraud Protocol Enabled:</strong> Manual time editing is restricted. Please use the "SET SYSTEM TIME" buttons below to clock in/out exactly at the moment of attendance.
               </p>
             </div>
           )}
 
           {/* 📍 GEOLOCATION & GPS ALLOW HELPER PANEL */}
-          <div className="border border-amber-200 rounded-sm bg-gradient-to-r from-amber-50 to-orange-50/20 overflow-hidden shadow-sm">
-            <div className="bg-amber-100/70 p-3 flex items-center justify-between border-b border-amber-200">
-              <div className="flex items-center gap-2">
-                <Compass className="w-4 h-4 text-amber-600 animate-spin" style={{ animationDuration: '6s' }} />
-                <h3 className="text-xs font-bold text-amber-950">লোকেশন পারমিশন ও জিপিএস গাইড (অবশ্যই পড়ুন)</h3>
-              </div>
-              <button 
-                type="button"
-                onClick={() => {
-                  setShowHelp(!showHelp);
-                  if (!showHelp && testStatus === 'idle') {
-                    testGeolocation();
-                  }
-                }}
-                className="text-[10px] font-bold text-amber-800 hover:text-amber-950 bg-white border border-amber-200 px-2 py-0.5 rounded-sm hover:shadow-xs transition-colors"
-              >
-                {showHelp ? '▲ বন্ধ করুন' : '▼ সমাধান দেখুন'}
-              </button>
+          {permissionStatus === 'granted' ? (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-2.5 rounded-sm flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+              <p className="text-[10px] font-bold">জি-পি-এস (GPS) লোকেশন সচল রয়েছে। নিচে বাটন চেপে হাজিরা সম্পন্ন করুন।</p>
             </div>
+          ) : (
+            <div className="border border-amber-200 rounded-sm bg-gradient-to-b from-amber-50 to-white overflow-hidden shadow-xs">
+              <div className="bg-amber-100/50 p-2.5 flex items-center justify-between border-b border-amber-150">
+                <div className="flex items-center gap-2">
+                  <Compass className="w-4 h-4 text-amber-600 animate-spin" style={{ animationDuration: '6s' }} />
+                  <h3 className="text-[11px] font-bold text-amber-950">লোকেশন পারমিশন ও জিপিএস এলার্ট</h3>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setShowHelp(!showHelp)}
+                  className="text-[9px] font-bold bg-white text-stone-700 hover:text-stone-900 border border-stone-200 px-2 py-0.5 rounded-sm active:scale-95 transition-all"
+                >
+                  {showHelp ? '▲ বিশদ বিবরণ বন্ধ' : '▼ বিশদ বিবরণ দেখুন'}
+                </button>
+              </div>
 
-            <div className="p-3">
-              <div className="flex flex-col gap-2">
-                <p className="text-[11px] text-amber-900 leading-relaxed font-semibold">
-                  ফোনে বা ক্রোম ব্রাউজারে লোকেশন পারমিশন পপআপ স্ক্রিনে না আসলে নিচের ৩টি ধাপের যেকোনো একটি অনুসরণ করুন:
-                </p>
-
-                {/* STEP 1: OPEN IN NEW TAB */}
-                <div className="bg-white p-2.5 border border-amber-200/60 rounded-sm">
-                  <div className="flex items-start gap-1.5">
-                    <span className="bg-amber-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-sm shrink-0">ধাপ ১</span>
-                    <div className="flex-grow">
-                      <p className="text-[11px] font-bold text-stone-900 leading-tight mb-1">
-                        নতুন ট্যাবে অ্যাপটি ওপেন করুন (১০০% কার্যকারী সমাধান)
-                      </p>
-                      <p className="text-[9px] text-stone-600 leading-normal mb-2">
-                        আপনি বর্তমানে প্রিভিউ ফ্রেমের (iFrame) ভেতর আছেন, তাই ব্রাউজার সুরক্ষার কারণে জিপিএস পারমিশন বক্স নাও দেখাতে পারে। নিচে চাপ দিলে সরাসরি অরিজিনাল ফুল স্ক্রিন ট্যাবে ওপেন হবে এবং জিপিএস অন করার পপআপ সাথে সাথে আসবে।
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => window.open(window.location.href, '_blank')}
-                        className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-1.5 px-3 rounded-sm text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
-                      >
-                        <ExternalLink size={11} /> নতুন ট্যাবে ফুল-স্ক্রিন অ্যাপ ওপেন করুন
-                      </button>
-                    </div>
-                  </div>
+              <div className="p-3.5 flex flex-col gap-3">
+                <div className="text-center py-1">
+                  <p className="text-[12px] text-stone-900 leading-snug font-bold mb-2">
+                    ফোনে লোকেশন অন করতে নিচের বাটনে চাপ দিন এবং আসা পপ-আপ স্ক্রিনে <span className="text-blue-600">"Allow" / "অনুমতি দিন"</span> সিলেক্ট করুন:
+                  </p>
+                  
+                  {/* DIRECT NATIVE PROMPT TRIGGER BUTTON */}
+                  <button
+                    type="button"
+                    onClick={triggerNativePermissionPrompt}
+                    className="w-full bg-amber-500 hover:bg-amber-600 active:scale-97 text-stone-950 font-black py-3 px-4 rounded-sm text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-md animate-pulse hover:animate-none transition-all"
+                    style={{ animationDuration: '2s' }}
+                  >
+                    <Compass className="w-4 h-4 animate-spin text-stone-950" style={{ animationDuration: '4s' }} />
+                    লোকেশন পারমিশন অন করার পপ-আপ চালু করুন
+                  </button>
+                  <p className="text-[9px] text-amber-800 font-semibold mt-1.5">
+                    * বাটনটিতে ক্লিক করলে ব্রাউজার/ফোনের নিজস্ব জিপিএস এপ্রুভাল মেনু পপ-আপ স্ক্রিনে ভেসে আসবে।
+                  </p>
                 </div>
 
-                {showHelp && (
-                  <div className="flex flex-col gap-2 mt-1">
-                    {/* STEP 2: CHROME MOBILE SETTINGS */}
-                    <div className="bg-white p-2.5 border border-stone-200 rounded-sm">
+                <div className="border-t border-stone-100 pt-3">
+                  <div className="flex flex-col gap-2">
+                    {/* ACCESSIBLE EASY REMEDY */}
+                    <div className="bg-stone-50 p-2.5 border border-stone-200 rounded-sm">
                       <div className="flex items-start gap-1.5">
-                        <span className="bg-stone-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-sm shrink-0">ধাপ ২</span>
-                        <div>
+                        <span className="bg-blue-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-xs shrink-0">উত্তম উপায়</span>
+                        <div className="flex-grow">
                           <p className="text-[11px] font-bold text-stone-900 leading-tight mb-1">
-                            ক্রোম ফোনের নিজস্ব লোকেশন অন করুন
+                            নতুন ট্যাবে ওপেন (যদি পপআপ না আসে)
                           </p>
-                          <ul className="text-[9px] text-stone-600 space-y-1 list-decimal list-inside pl-0.5 leading-relaxed">
-                            <li>আপনার ফোনের উপর হতে নোটিফিকেশন বার নামিয়ে <strong>GPS বা Location</strong> আইকনটি অন (সবুজ/নীল) করুন।</li>
-                            <li>ফোনের ক্রোম ব্রাউজারের ডানপাশের <strong>৩টি ডট (⋮)</strong> এ চাপ দিন ➔ <strong>Settings (সেটিংস)</strong> এ যান।</li>
-                            <li>একটু নিচে নেমে <strong>Site Settings (সাইট সেটিংস)</strong> ➔ <strong>Location (লোকেশন)</strong> এ চাপ দিন।</li>
-                            <li>সেখানে Blocked তালিকায় এই অ্যাপটি থাকলে সেটিতে ক্লিক করে <strong>Allow (অনুমতি দিন)</strong> করে দিন।</li>
-                          </ul>
+                          <p className="text-[9px] text-stone-600 leading-normal mb-2">
+                            প্রিভিউ ফ্রেমে থাকার কারণে মাঝেমধ্যে সরাসরি পপ-আপ বক্স আসে না। নিচের নীল বাটনে চাপ দিলে ১ সেকেন্ডে অরিজিনাল ট্যাবে ওপেন হবে এবং পপ-আপ সাথে সাথে কাজ করবে।
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => window.open(window.location.href, '_blank')}
+                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded-xs text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-sm active:scale-95 transition-all"
+                          >
+                            <ExternalLink size={11} /> নতুন ট্যাবে ফুল-স্ক্রিন অ্যাপ ওপেন করুন
+                          </button>
                         </div>
                       </div>
                     </div>
 
-                    {/* STEP 3: DESKTOP CHROME SETTINGS */}
-                    <div className="bg-white p-2.5 border border-stone-200 rounded-sm">
-                      <div className="flex items-start gap-1.5">
-                        <span className="bg-stone-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-sm shrink-0">ধাপ ৩</span>
-                        <div>
-                          <p className="text-[11px] font-bold text-stone-900 leading-tight mb-1">
-                            কম্পিউটার/ডেস্কটপে ক্রোম সেটিংস
-                          </p>
-                          <p className="text-[9px] text-stone-600 leading-relaxed">
-                            web browser-এর একদম উপরে অ্যাড্রেস বার বা লিংকের বাম পাশে অবস্থিত <strong>তালা আইকন (🔒)</strong> ক্লিক করুন এবং <strong>Location</strong> অপশনটি <strong>Allow</strong> করে দিয়ে পেজটি রি-ফ্রেশ দিন।
-                          </p>
+                    {showHelp && (
+                      <div className="flex flex-col gap-2 mt-1">
+                        {/* STEP 2: CHROME MOBILE SETTINGS */}
+                        <div className="bg-white p-2.5 border border-stone-200 rounded-sm">
+                          <div className="flex items-start gap-1.5">
+                            <span className="bg-stone-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-sm shrink-0">ধাপ ২</span>
+                            <div>
+                              <p className="text-[11px] font-bold text-stone-900 leading-tight mb-1">
+                                ক্রোম ফোনের নিজস্ব লোকেশন সেটিং
+                              </p>
+                              <ul className="text-[9px] text-stone-600 space-y-1 list-decimal list-inside pl-0.5 leading-relaxed">
+                                <li>ফোনের উপর থেকে নোটিফিকেশন বার নামিয়ে <strong>GPS বা Location</strong> অন করুন।</li>
+                                <li>ফোনের ক্রোম ব্রাউজারের ডানপাশের <strong>৩টি ডট (⋮)</strong> ➔ <strong>Settings (সেটিংস)</strong> এ যান।</li>
+                                <li>সেখান থেকে <strong>Site Settings (সাইট সেটিংস)</strong> ➔ <strong>Location (লোকেশন)</strong> এ চাপ দিন এবং Blocked তালিকায় অ্যাপটি থাকলে সেটিতে ক্লিক করে <strong>Allow (অনুমতি দিন)</strong> করুন।</li>
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* STEP 3: DESKTOP CHROME SETTINGS */}
+                        <div className="bg-white p-2.5 border border-stone-200 rounded-sm">
+                          <div className="flex items-start gap-1.5">
+                            <span className="bg-stone-600 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-sm shrink-0">ধাপ ৩</span>
+                            <div>
+                              <p className="text-[11px] font-bold text-stone-900 leading-tight mb-1">
+                                কম্পিউটার/ডেস্কটপে ক্রোম সেটিংস
+                              </p>
+                              <p className="text-[9px] text-stone-600 leading-relaxed">
+                                ব্রাউজারের উপরে অ্যাড্রেস বারের বাম পাশে অবস্থিত <strong>তালা আইকন (🔒)</strong> ক্লিক করুন এবং <strong>Location</strong> অপশনটি <strong>Allow</strong> করে পুনরায় দিন।
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* DYNAMIC GPS TESTER */}
+                        <div className="bg-white p-2.5 border border-stone-200 rounded-sm">
+                          <div className="flex items-center justify-between border-b border-stone-100 pb-1.5 mb-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <RefreshCw size={11} className={`text-amber-600 ${testStatus === 'checking' ? 'animate-spin' : ''}`} />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 font-sans">রিয়েল-টাইম জিপিএস টেস্টার</span>
+                            </div>
+                            <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                              testStatus === 'granted' ? 'bg-green-100 text-green-800' :
+                              testStatus === 'denied' ? 'bg-red-100 text-red-800' :
+                              testStatus === 'checking' ? 'bg-amber-100 text-amber-800' :
+                              'bg-stone-100 text-stone-600'
+                            }`}>
+                              {testStatus === 'idle' ? 'Ready' :
+                               testStatus === 'checking' ? 'Checking...' :
+                               testStatus === 'granted' ? 'অ্যাক্টিভ ✓' :
+                               testStatus === 'denied' ? 'ব্লকড ✗' : 'Ready'}
+                            </span>
+                          </div>
+                          
+                          <div className="flex flex-col gap-1.5">
+                            <p className="text-[9px] text-stone-600 leading-snug">
+                              লোকেশন ঠিকমতো কাজ করছে কি না তা নিশ্চিত করতে নিচের টেস্টার বাটনে চাপ দিন:
+                            </p>
+                            
+                            <button
+                              type="button"
+                              onClick={testGeolocation}
+                              disabled={testStatus === 'checking'}
+                              className="w-full bg-stone-800 hover:bg-black text-white text-[9px] font-bold py-1.5 px-2 rounded-xs uppercase tracking-wide transition-all active:scale-95 disabled:opacity-50"
+                            >
+                              {testStatus === 'checking' ? 'যাচাই করা হচ্ছে...' : 'লোকেশন সংযোগ পরীক্ষা করুন'}
+                            </button>
+
+                            {testStatus === 'granted' && (
+                              <p className="text-[9px] text-green-700 font-bold bg-green-50 p-1.5 border border-green-100 rounded-xs">
+                                অভিনন্দন! আপনার ব্রাউজার লোকেশন সঠিকভাবে অ্যাক্সেস করতে পারছে।
+                              </p>
+                            )}
+                            {testStatus === 'denied' && (
+                              <p className="text-[9px] text-red-700 font-bold bg-red-50 p-1.5 border border-red-100 rounded-xs">
+                                ব্যর্থ! জিপিএস বা ব্রাউজার পারমিশন ব্লক করা আছে। উর্ধ্বতন পদ্ধতিতে জিপিএস অন করুন।
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-
-                    {/* DYNAMIC GPS TESTER */}
-                    <div className="bg-white p-2.5 border border-amber-200 rounded-sm">
-                      <div className="flex items-center justify-between border-b border-stone-100 pb-1.5 mb-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <RefreshCw size={11} className={`text-amber-600 ${testStatus === 'checking' ? 'animate-spin' : ''}`} />
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 font-sans">রিয়েল-টাইম জিপিএস টেস্টার</span>
-                        </div>
-                        <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                          testStatus === 'granted' ? 'bg-green-100 text-green-800' :
-                          testStatus === 'denied' ? 'bg-red-100 text-red-800' :
-                          testStatus === 'checking' ? 'bg-amber-100 text-amber-800' :
-                          'bg-stone-100 text-stone-600'
-                        }`}>
-                          {testStatus === 'idle' ? 'Ready' :
-                           testStatus === 'checking' ? 'Checking...' :
-                           testStatus === 'granted' ? 'অ্যাক্টিভ ✓' :
-                           testStatus === 'denied' ? 'ব্লকড ✗' : 'Ready'}
-                        </span>
-                      </div>
-                      
-                      <div className="flex flex-col gap-1.5">
-                        <p className="text-[9px] text-stone-600 leading-snug">
-                          আপনার লোকেশন ঠিকমতো কাজ করছে কি না তা নিশ্চিত করতে নিচের বাটনে চাপ দিন এবং ব্রাউজার পারমিশন চাইলে "Allow" করুন।
-                        </p>
-                        
-                        <button
-                          type="button"
-                          onClick={testGeolocation}
-                          disabled={testStatus === 'checking'}
-                          className="w-full bg-stone-800 hover:bg-black text-white text-[9px] font-bold py-1 px-2 rounded-xs uppercase tracking-wide transition-all active:scale-95 disabled:opacity-50"
-                        >
-                          {testStatus === 'checking' ? 'যাচাই করা হচ্ছে...' : 'লোকেশন সংযোগ পরীক্ষা করুন'}
-                        </button>
-
-                        {testStatus === 'granted' && (
-                          <p className="text-[9px] text-green-700 font-bold bg-green-50 p-1.5 border border-green-100 rounded-xs">
-                            অভিনন্দন! আপনার ব্রাউজার লোকেশন সঠিকভাবে অ্যাক্সেস করতে পারছে। আপনি এখন সাধারণ উপায়ে বা নতুন ট্যাবে থেকে হাজিরা সম্পন্ন করতে পারবেন।
-                          </p>
-                        )}
-                        {testStatus === 'denied' && (
-                          <p className="text-[9px] text-red-700 font-bold bg-red-50 p-1.5 border border-red-100 rounded-xs">
-                            ব্যর্থ! জিপিএস বা ব্রাউজার পারমিশন ব্লক করা আছে। অনুগ্রহ করে ধাপ ১ অনুযায়ী "নতুন ট্যাবে ওপেন" বা ধাপ ২ অনুযায়ী ব্রাউজার সেটিংস থেকে পারমিশন সচল করুন।
-                          </p>
-                        )}
-                      </div>
-                    </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             </div>
-          </div>
+          )}
           
           <div className="space-y-1">
             <label className="text-[10px] uppercase font-bold text-stone-400 flex items-center gap-1">
