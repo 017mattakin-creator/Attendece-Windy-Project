@@ -34,7 +34,6 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
   const [lateRemark, setLateRemark] = useState('');
   const [locing, setLocing] = useState(false);
   const [locingType, setLocingType] = useState<'in' | 'out' | null>(null);
-  const [locAttempts, setLocAttempts] = useState<Record<'in' | 'out', number>>({ in: 0, out: 0 });
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -57,7 +56,6 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
       setOutTime('');
       setLocation('');
       setLateRemark('');
-      setLocAttempts({ in: 0, out: 0 });
     }
   }, [selectedEmp]);
 
@@ -166,7 +164,6 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
         .finally(() => {
           setLocing(false);
           setLocingType(null);
-          setLocAttempts(prev => ({ ...prev, [type]: 0 }));
         });
     };
 
@@ -184,23 +181,15 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
          reason = "ডিভাইস জিপিএস বন্ধ";
       }
       
-      setLocAttempts(prev => {
-        const nextCount = prev[type] + 1;
-        if (nextCount >= 2) {
-          alert(`লোকেশন পাওয়া যায়নি (${reason})।\n\nপর পর ২ বার চেষ্টা করা হয়েছে কিন্তু লোকেশন পাওয়া যায়নি।\n\nহাজিরা সচল রাখতে সাময়িকভাবে লোকেশন ছাড়াই সরাসরি সাবমিট করার অনুমতি দেওয়া হলো। 'Submit Attendance' বাটনে চাপ দিয়ে হাজিরা দিন।`);
-          
-          const fallbackLoc = {
-            lat: 0,
-            lng: 0,
-            address: `${reason} (হাজিরা দেওয়া যাবে)`
-          };
-          if (type === 'in') setLiveLocIn(fallbackLoc);
-          else setLiveLocOut(fallbackLoc);
-        } else {
-          alert(`লোকেশন পাওয়া যায়নি (${reason})।\n\nঅনুগ্রহ করে ফোনের জিপিএস (GPS/Location) অন করুন এবং ব্রাউজারে লোকেশন পারমিশন Allow করে পুনরায় চেষ্টা করুন (প্রচেষ্টা ${nextCount}/২)।`);
-        }
-        return { ...prev, [type]: nextCount };
-      });
+      // Load fallback location object instantly and silently so the user is never blocked
+      const fallbackLoc = {
+        lat: 0,
+        lng: 0,
+        address: `${reason} (হাজিরা দেওয়া যাবে)`
+      };
+      
+      if (type === 'in') setLiveLocIn(fallbackLoc);
+      else setLiveLocOut(fallbackLoc);
     };
 
     // Attempt high-accuracy GPS tracking
@@ -225,10 +214,6 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     
     let finalLocIn = liveLocIn;
     if (!finalLocIn && inTime && viewMode === 'user') {
-      const attempts = locAttempts['in'];
-      if (attempts < 2) {
-        return alert("আপনার ইন-টাইম জিপিএস (GPS) লোকেশন নেওয়া হয়নি!\n\nঅনুগ্রহ করে অন্তত ১ বা ২ বার 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নেওয়ার চেষ্টা করুন। ২ বার ব্যর্থ হলে এমনিতেই সাবমিট করতে পারবেন।");
-      }
       finalLocIn = {
         lat: 0,
         lng: 0,
@@ -237,12 +222,14 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
       setLiveLocIn(finalLocIn);
     }
     
+    // STRICT REMARK VALIDATION
+    const [h, m] = inTime.split(':').map(Number);
+    if ((h > 9 || (h === 9 && m > 15)) && !lateRemark.trim()) {
+      return alert("দুঃখিত! আপনি সকাল ০৯:১৫ এর পরে এসেছেন। \n\nদেরি হওয়ার কারণ (Late Remark) অবশ্যই লিখতে হবে, তা না হলে এন্ট্রি সেভ হবে না।");
+    }
+
     let finalLocOut = liveLocOut;
     if (!finalLocOut && outTime && viewMode === 'user') {
-      const attempts = locAttempts['out'];
-      if (attempts < 2) {
-        return alert("আপনার আউট-টাইম জিপিএস (GPS) লোকেশন নেওয়া হয়নি!\n\nঅনুগ্রহ করে অন্তত ১ বা ২ বার 'SET TIME & GPS' বাটনে ক্লিক করে লোকেশন নেওয়ার চেষ্টা করুন। ২ বার ব্যর্থ হলে এমনিতেই সাবমিট করতে পারবেন।");
-      }
       finalLocOut = {
         lat: 0,
         lng: 0,
@@ -491,10 +478,10 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
               className="space-y-1 bg-amber-50 p-3 border border-amber-100 rounded-sm"
             >
               <label className="text-[10px] uppercase font-bold text-amber-700 flex items-center gap-1">
-                <AlertCircle className="w-3 h-3 text-amber-500" /> অফিসে পৌঁছাতে দেরি হওয়ার কারণ (ঐচ্ছিক)
+                <AlertCircle className="w-3 h-3 text-amber-500" /> অফিসে পৌঁছাতে দেরি হওয়ার সুনির্দিষ্ট কারণ এখানে লিখুন
               </label>
               <textarea 
-                placeholder="দেরি হওয়ার কারণ এখানে লিখতে পারেন (বাধ্যতামূলক নয়)..."
+                placeholder="অফিসে পৌঁছাতে দেরি হওয়ার সুনির্দিষ্ট কারণ এখানে লিখুন..."
                 className="w-full border border-amber-200 p-2 text-xs rounded-sm focus:border-amber-400 outline-none bg-white min-h-[70px]"
                 value={lateRemark}
                 onChange={e => setLateRemark(e.target.value)}
