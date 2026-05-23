@@ -224,10 +224,16 @@ export default function App() {
                   const cleanedKey = k.replace(/^\uFEFF/, '').trim();
                   cleanedRow[cleanedKey] = row[k] !== undefined && row[k] !== null ? String(row[k]).trim() : '';
               }
+              
+              const rawId = cleanedRow['No.'] || cleanedRow['No'] || cleanedRow['ID'] || cleanedRow['id'] || cleanedRow['Employee ID'] || cleanedRow['EmployeeID'] || cleanedRow.no;
+              let cleanId = rawId ? String(rawId).trim() : '';
+              if (cleanId.endsWith('.0')) {
+                  cleanId = cleanId.slice(0, -2);
+              }
+              cleanedRow._cleanEmpId = cleanId;
               return cleanedRow;
           }).filter(row => {
-              const rawId = row['No.'] || row['No'] || row['ID'] || row['id'] || row['Employee ID'] || row['EmployeeID'] || row.no;
-              return !!(rawId && String(rawId).trim());
+              return !!row._cleanEmpId;
           });
 
           if (rawData.length === 0) {
@@ -242,11 +248,20 @@ export default function App() {
           const empIdSet = new Set(allEmps?.map(e => String(e.id).trim()) || []);
           console.log('Valid employee IDs in DB:', Array.from(empIdSet));
 
+          // Fetch all current locations from the database to map them correctly and prevent foreign key constraints
+          const { data: allLocs } = await supabase.from('locations').select('id, name');
+          const locIdSet = new Set(allLocs?.map(l => String(l.id).trim()) || []);
+          const locNameMap = new Map<string, string>(); // name.toLowerCase() -> id
+          allLocs?.forEach(l => {
+              if (l.name) {
+                  locNameMap.set(l.name.toLowerCase().trim(), String(l.id).trim());
+              }
+          });
+
           // Auto-registration module: identify missing employees and register them on the fly!
           const missingEmployeesToRegister = new Map<string, any>();
           for (const rec of rawData) {
-              const rawId = rec['No.'] || rec['No'] || rec['ID'] || rec['id'] || rec['Employee ID'] || rec['EmployeeID'] || rec.no;
-              const empId = rawId ? String(rawId).trim() : null;
+              const empId = rec._cleanEmpId;
               if (empId && !empIdSet.has(empId) && !missingEmployeesToRegister.has(empId)) {
                   const empName = (rec['Name'] || rec['name'] || `Employee ${empId}`).trim();
                   const designation = (rec['ID Number'] || rec['Designation'] || rec['designation'] || '').trim();
@@ -281,6 +296,55 @@ export default function App() {
               }
           }
 
+          // Auto-registration for missing locations from upload to support locations reference constraint
+          const missingLocationsToRegister = new Map<string, any>();
+          for (const rec of rawData) {
+              const rawLoc = String(
+                  rec['Location ID'] || 
+                  rec.locationId || 
+                  rec.location_id || 
+                  rec['Location'] || 
+                  rec.location || 
+                  rec['Location Name'] || 
+                  rec.locationName || 
+                  rec.location_name || 
+                  ''
+              ).trim();
+              
+              if (rawLoc) {
+                  const rawLocLower = rawLoc.toLowerCase();
+                  const existsAsId = locIdSet.has(rawLoc);
+                  const existsAsName = locNameMap.has(rawLocLower);
+                  const existsInRegisterMap = missingLocationsToRegister.has(rawLocLower);
+                  
+                  if (!existsAsId && !existsAsName && !existsInRegisterMap) {
+                      const isNumeric = /^\d+$/.test(rawLoc);
+                      const locId = rawLoc;
+                      const locName = isNumeric ? `Location ${rawLoc}` : rawLoc;
+                      
+                      missingLocationsToRegister.set(rawLocLower, {
+                          id: locId,
+                          name: locName
+                      });
+                  }
+              }
+          }
+
+          if (missingLocationsToRegister.size > 0) {
+              const toInsertLocs = Array.from(missingLocationsToRegister.values());
+              console.log('On-the-fly registering missing locations:', toInsertLocs);
+              const { error: insertLocError } = await supabase.from('locations').insert(toInsertLocs);
+              if (insertLocError) {
+                  console.error('Failed to auto-register missing locations during upload:', insertLocError);
+              } else {
+                  console.log(`Successfully auto-registered ${toInsertLocs.length} new locations!`);
+                  toInsertLocs.forEach(loc => {
+                      locIdSet.add(loc.id);
+                      locNameMap.set(loc.name.toLowerCase().trim(), loc.id);
+                  });
+              }
+          }
+
           // Group by empId and shift-aware date to find min/max times chronologically
           const groupedData: Record<string, { empId: string, date: string, punches: Array<{ time: Date, timeStr: string }>, idKey?: string, locationId?: string }> = {};
           let skippedCount = 0;
@@ -288,8 +352,7 @@ export default function App() {
 
           for (let i = 0; i < rawData.length; i++) {
              const rec = rawData[i];
-             const rawId = rec['No.'] || rec['No'] || rec['ID'] || rec['id'] || rec['Employee ID'] || rec['EmployeeID'] || rec.no;
-             const empId = rawId ? String(rawId).trim() : null;
+             const empId = rec._cleanEmpId;
              
              // Support combined DateTime or separate Date/Time columns
              const datePart = rec['Date'] || rec['date'] || rec['Date/Time'] || rec['DateTime'] || rec.dateISO || '';
@@ -309,15 +372,40 @@ export default function App() {
                         const timeStr = `${hh}:${mm}`;
                         const key = `${empId}_${dateIso}`;
 
+                        const rawLoc = String(
+                            rec['Location ID'] || 
+                            rec.locationId || 
+                            rec.location_id || 
+                            rec['Location'] || 
+                            rec.location || 
+                            rec['Location Name'] || 
+                            rec.locationName || 
+                            rec.location_name || 
+                            ''
+                        ).trim();
+                        
+                        let resolvedLocId: string | null = null;
+                        if (rawLoc) {
+                            const rawLocLower = rawLoc.toLowerCase();
+                            if (locIdSet.has(rawLoc)) {
+                                resolvedLocId = rawLoc;
+                            } else if (locNameMap.has(rawLocLower)) {
+                                resolvedLocId = locNameMap.get(rawLocLower) || null;
+                            }
+                        }
+
                         if (!groupedData[key]) {
                             groupedData[key] = {
                                 empId,
                                 date: dateIso,
                                 punches: [],
                                 idKey: rec['ID Number'] || rec.idKey || rec.idNumber || null,
-                                locationId: rec['Location ID'] || rec.locationId || null
+                                locationId: resolvedLocId
                             };
+                        } else if (resolvedLocId && !groupedData[key].locationId) {
+                            groupedData[key].locationId = resolvedLocId;
                         }
+
                         groupedData[key].punches.push({
                             time: dateObj,
                             timeStr: timeStr
@@ -541,24 +629,49 @@ export default function App() {
           setUploadProgress(40);
 
           let errorCount = 0;
+          let lastErrorMsg = '';
           // Batch upsert in chunks
           const chunkSize = 50;
           for (let i = 0; i < sanitizedAttendanceData.length; i += chunkSize) {
             const chunk = sanitizedAttendanceData.slice(i, i + chunkSize);
+            
+            // Rely on a strict database schema shape to prevent any read-only, foreign-key, or type issues on upsert
+            const cleanedChunk = chunk.map((item: any) => {
+                const cleaned: any = {
+                    employee_id: String(item.employee_id).trim(),
+                    date_iso: item.date_iso,
+                    sys_in_time: item.sys_in_time || null,
+                    sys_out_time: item.sys_out_time || null,
+                    manual_in_time: item.manual_in_time || item.sys_in_time || null,
+                    manual_out_time: item.manual_out_time || item.sys_out_time || null,
+                    status: item.status || 'Present',
+                    location_id: item.location_id || null,
+                    id_number: item.id_number || null,
+                    live_location_in: item.live_location_in || null,
+                    live_location_out: item.live_location_out || null,
+                    late_remark: item.late_remark || null
+                };
+                if (item.live_location) {
+                    cleaned.live_location = item.live_location;
+                }
+                return cleaned;
+            });
+
             const { error: upsertError } = await supabase
               .from('attendance')
-              .upsert(chunk, { onConflict: 'employee_id,date_iso' });
+              .upsert(cleanedChunk, { onConflict: 'employee_id,date_iso' });
             
             if (upsertError) {
               console.error('Upsert index error:', upsertError);
               errorCount += chunk.length;
+              lastErrorMsg = upsertError.message || JSON.stringify(upsertError);
             }
             
             setUploadProgress(40 + Math.round(((i + chunk.length) / sanitizedAttendanceData.length) * 60));
           }
 
           let msg = `Upload process finished.\n- ${sanitizedAttendanceData.length - errorCount} records updated successfully.`;
-          if (errorCount > 0) msg += `\n- ${errorCount} records failed to save.`;
+          if (errorCount > 0) msg += `\n- ${errorCount} records failed to save. (Details: ${lastErrorMsg})`;
           if (skippedCount > 0) msg += `\n- ${skippedCount} items skipped because employee IDs were not found in directory.`;
           
           alert(msg);
@@ -640,149 +753,8 @@ export default function App() {
           <div className="flex items-center justify-center p-20">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-800"></div>
           </div>
-        )}
-
-        {dbStatus === 'connected' && (
+        )}        {dbStatus === 'connected' && (
           <>
-            {/* Real-time Category metrics: Staff & Security */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-              {/* Card 1: Staff Force */}
-              <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
-                <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
-                    <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
-                      Staff (স্টাফ)
-                    </h3>
-                  </div>
-                  <span className="text-[9px] bg-amber-50 border border-amber-200/50 text-amber-800 px-1.5 py-0.5 rounded-sm font-bold">
-                    OFFICE / ADMIN
-                  </span>
-                </div>
-                
-                <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
-                  <div className="flex flex-col">
-                    <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
-                    <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
-                      {employees.filter(isStaffEmployee).length}
-                    </span>
-                  </div>
-                  <button 
-                    onClick={() => setShowList('present-staff')}
-                    className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
-                  >
-                    <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
-                    <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
-                      {(() => {
-                        return employees.filter(isStaffEmployee).filter(emp => {
-                          const shift = getEmployeeShift(emp.id);
-                          const targetDate = getTodayShiftDate(shift);
-                          return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                        }).length;
-                      })()}
-                    </span>
-                  </button>
-                  <button 
-                    onClick={() => setShowList('absent-staff')}
-                    className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
-                  >
-                    <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
-                    <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
-                      {(() => {
-                        const staffList = employees.filter(isStaffEmployee);
-                        const presentCount = staffList.filter(emp => {
-                          const shift = getEmployeeShift(emp.id);
-                          const targetDate = getTodayShiftDate(shift);
-                          return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                        }).length;
-                        return Math.max(0, staffList.length - presentCount);
-                      })()}
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Card 2: Security Force */}
-              <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
-                <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
-                    <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
-                      Security (নিরাপত্তা)
-                    </h3>
-                  </div>
-                  <span className="text-[9px] bg-indigo-50 border border-indigo-200/50 text-indigo-800 px-1.5 py-0.5 rounded-sm font-bold">
-                    GUARD FORCE
-                  </span>
-                </div>
-                
-                <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
-                  <div className="flex flex-col">
-                    <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
-                    <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
-                      {employees.filter(isSecurityEmployee).length}
-                    </span>
-                  </div>
-                  <button 
-                    onClick={() => setShowList('present-security')}
-                    className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
-                  >
-                    <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
-                    <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
-                      {(() => {
-                        return employees.filter(isSecurityEmployee).filter(emp => {
-                          const shift = getEmployeeShift(emp.id);
-                          const targetDate = getTodayShiftDate(shift);
-                          return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                        }).length;
-                      })()}
-                    </span>
-                  </button>
-                  <button 
-                    onClick={() => setShowList('absent-security')}
-                    className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
-                  >
-                    <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
-                    <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
-                      {(() => {
-                        const securityList = employees.filter(isSecurityEmployee);
-                        const presentCount = securityList.filter(emp => {
-                          const shift = getEmployeeShift(emp.id);
-                          const targetDate = getTodayShiftDate(shift);
-                          return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                        }).length;
-                        return Math.max(0, securityList.length - presentCount);
-                      })()}
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Card 3: Date & System Sync Status */}
-              <div className="bg-stone-900 text-stone-100 rounded-sm p-5 flex flex-col justify-between border border-stone-950">
-                <div className="flex justify-between items-center pb-2.5 border-b border-stone-800">
-                  <div className="flex items-center gap-1.5 text-amber-500 font-bold uppercase text-[9px] tracking-wider leading-none">
-                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping shrink-0" />
-                    Live System Date
-                  </div>
-                  <span className="text-[8px] font-mono bg-stone-800 text-stone-400 border border-stone-700 px-1.5 py-0.5 rounded uppercase font-bold">
-                    ACTIVE CONTROL
-                  </span>
-                </div>
-                
-                <div className="flex flex-col mt-2">
-                  <div className="text-[9px] uppercase font-bold text-stone-450 tracking-wider">Date Tracked</div>
-                  <div className="text-sm md:text-md font-bold text-white leading-tight mt-1">
-                    {formatSystemDate(getTodayShiftDate())}
-                  </div>
-                </div>
-                
-                <p className="text-[8.5px] text-stone-500 mt-2 font-mono leading-relaxed">
-                  Day: 08:00 AM - 06:00 AM • Night: 08:00 PM - 08:00 AM
-                </p>
-              </div>
-            </div>
-
             {/* Status List Modal */}
             {showList && (
               <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -864,29 +836,188 @@ export default function App() {
                 </div>
               </div>
             )}
-            {activeSection === 'dashboard' && (
-          <div className="space-y-8">
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-               <div className="space-y-4">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-stone-500">Quick Actions</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                      <button onClick={() => setActiveSection('attendance')} className="bg-stone-800 text-white p-4 text-xs font-bold uppercase hover:bg-stone-900 transition-colors">Daily Entry</button>
-                      <button onClick={() => setActiveSection('monthly')} className="bg-stone-200 text-stone-800 p-4 text-xs font-bold uppercase hover:bg-stone-300 transition-colors">Monthly Report</button>
+            {activeSection === 'dashboard' && (
+              <div className="space-y-8">
+                {/* Visual Assistance Banner right at the absolute top of the Dashboard */}
+                <div className="bg-amber-500/15 border-l-4 border-amber-500 p-4 rounded-r-sm shadow-xs flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping shrink-0" />
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-amber-900 font-sans">
+                      Attendance Panel / হাজিরা প্যানেল
+                    </h3>
                   </div>
-                  
-                  {viewMode === 'admin' && (
-                    <div className="pt-4">
-                       <h3 className="text-xs font-bold uppercase tracking-widest text-stone-500 mb-2">Live Location (Admin Only)</h3>
-                       <LiveLocationMap attendance={attendance} />
+                  <p className="text-[11px] text-stone-700 leading-normal font-medium">
+                    হাজিরা দিতে প্রথমে আপনার নাম সিলেক্ট করুন, জিপিএস লোড হলে <strong>'SET TIME & GPS'</strong> বাটনে চাপ দিন এবং নিচে <strong>'Submit Attendance'</strong> চাপুন।
+                  </p>
+                </div>
+
+                {/* Manual/Auto Attendance Entry Form is placed on the ABSOLUTE TOP of the dashboard page */}
+                <ManualEntrySection employees={employees} locations={locations} onRefresh={fetchData} viewMode={viewMode} />
+
+                {/* Real-time Category metrics: Staff & Security (moved here so they don't block other tabs) */}
+                <div className="pt-4 border-t border-stone-200">
+                  <h4 className="text-[10px] font-extrabold uppercase tracking-widest text-stone-400 mb-4 font-mono">Present Status Summary / বর্তমান পরিসংখ্যান</h4>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    {/* Card 1: Staff Force */}
+                    <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
+                      <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                          <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
+                            Staff (স্টাফ)
+                          </h3>
+                        </div>
+                        <span className="text-[9px] bg-amber-50 border border-amber-200/50 text-amber-800 px-1.5 py-0.5 rounded-sm font-bold">
+                          OFFICE / ADMIN
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
+                          <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
+                            {employees.filter(isStaffEmployee).length}
+                          </span>
+                        </div>
+                        <button 
+                          onClick={() => setShowList('present-staff')}
+                          className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
+                        >
+                          <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
+                          <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
+                            {(() => {
+                              return employees.filter(isStaffEmployee).filter(emp => {
+                                const shift = getEmployeeShift(emp.id);
+                                const targetDate = getTodayShiftDate(shift);
+                                return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                              }).length;
+                            })()}
+                          </span>
+                        </button>
+                        <button 
+                          onClick={() => setShowList('absent-staff')}
+                          className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
+                        >
+                          <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
+                          <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
+                            {(() => {
+                              const staffList = employees.filter(isStaffEmployee);
+                              const presentCount = staffList.filter(emp => {
+                                const shift = getEmployeeShift(emp.id);
+                                const targetDate = getTodayShiftDate(shift);
+                                return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                              }).length;
+                              return Math.max(0, staffList.length - presentCount);
+                            })()}
+                          </span>
+                        </button>
+                      </div>
                     </div>
-                  )}
-               </div>
-               
-               <ManualEntrySection employees={employees} locations={locations} onRefresh={fetchData} viewMode={viewMode} />
-            </div>
-          </div>
-        )}
+
+                    {/* Card 2: Security Force */}
+                    <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
+                      <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
+                          <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
+                            Security (নিরাপত্তা)
+                          </h3>
+                        </div>
+                        <span className="text-[9px] bg-indigo-50 border border-indigo-200/50 text-indigo-800 px-1.5 py-0.5 rounded-sm font-bold">
+                          GUARD FORCE
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
+                        <div className="flex flex-col">
+                          <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
+                          <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
+                            {employees.filter(isSecurityEmployee).length}
+                          </span>
+                        </div>
+                        <button 
+                          onClick={() => setShowList('present-security')}
+                          className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
+                        >
+                          <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
+                          <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
+                            {(() => {
+                              return employees.filter(isSecurityEmployee).filter(emp => {
+                                const shift = getEmployeeShift(emp.id);
+                                const targetDate = getTodayShiftDate(shift);
+                                return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                              }).length;
+                            })()}
+                          </span>
+                        </button>
+                        <button 
+                          onClick={() => setShowList('absent-security')}
+                          className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
+                        >
+                          <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
+                          <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
+                            {(() => {
+                              const securityList = employees.filter(isSecurityEmployee);
+                              const presentCount = securityList.filter(emp => {
+                                const shift = getEmployeeShift(emp.id);
+                                const targetDate = getTodayShiftDate(shift);
+                                return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                              }).length;
+                              return Math.max(0, securityList.length - presentCount);
+                            })()}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Card 3: Date & System Sync Status */}
+                    <div className="bg-stone-900 text-stone-100 rounded-sm p-5 flex flex-col justify-between border border-stone-950">
+                      <div className="flex justify-between items-center pb-2.5 border-b border-stone-800">
+                        <div className="flex items-center gap-1.5 text-amber-500 font-bold uppercase text-[9px] tracking-wider leading-none">
+                          <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping shrink-0" />
+                          Live System Date
+                        </div>
+                        <span className="text-[8px] font-mono bg-stone-800 text-stone-400 border border-stone-700 px-1.5 py-0.5 rounded uppercase font-bold">
+                          ACTIVE CONTROL
+                        </span>
+                      </div>
+                      
+                      <div className="flex flex-col mt-2">
+                        <div className="text-[9px] uppercase font-bold text-stone-450 tracking-wider">Date Tracked</div>
+                        <div className="text-sm md:text-md font-bold text-white leading-tight mt-1">
+                          {formatSystemDate(getTodayShiftDate())}
+                        </div>
+                      </div>
+                      
+                      <p className="text-[8.5px] text-stone-500 mt-2 font-mono leading-relaxed">
+                        Day: 08:00 AM - 06:00 AM • Night: 08:00 PM - 08:00 AM
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Dashboard bottom: Quick Actions & Maps */}
+                <div className="pt-4 border-t border-stone-200">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div className="space-y-4">
+                      <h3 className="text-xs font-bold uppercase tracking-widest text-stone-500">Quick Actions</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <button onClick={() => setActiveSection('attendance')} className="bg-stone-800 text-white p-4 text-xs font-bold uppercase hover:bg-stone-900 transition-colors">Daily Entry</button>
+                        <button onClick={() => setActiveSection('monthly')} className="bg-stone-200 text-stone-800 p-4 text-xs font-bold uppercase hover:bg-stone-300 transition-colors">Monthly Report</button>
+                      </div>
+                      
+                      {viewMode === 'admin' && (
+                        <div className="pt-4">
+                          <h3 className="text-xs font-bold uppercase tracking-widest text-stone-500 mb-2">Live Location (Admin Only)</h3>
+                          <LiveLocationMap attendance={attendance} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
         {activeSection === 'employees' && <EmployeeSection employees={employees} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'locations' && <LocationSection locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees} locations={locations} viewMode={viewMode} onUpdateAttendance={async (r) => {
