@@ -1,13 +1,17 @@
 import React from 'react';
 import { MapPin, ExternalLink } from 'lucide-react';
+import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
 
 interface Props {
   attendance: any[];
 }
 
 export default function LiveLocationMap({ attendance }: Props) {
-  const today = new Date().toISOString().split('T')[0];
-  const todayRecords = attendance.filter(a => a.dateISO === today && a.live_location);
+  const todayRecords = attendance.filter(a => {
+    const shift = getEmployeeShift(a.no);
+    const today = getTodayShiftDate(shift);
+    return a.dateISO === today && a.live_location;
+  });
 
   const markers = todayRecords.map(a => {
     try {

@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import EmployeeSelectorModal from './EmployeeSelectorModal';
 import { UserPlus, Calendar, Clock, MapPin, Save, CheckCircle2, AlertCircle, ExternalLink, HelpCircle, Compass, ShieldAlert, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
 
 interface Employee {
   id: string;
@@ -35,7 +36,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     return null;
   });
   const [showModal, setShowModal] = useState(false);
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(getTodayShiftDate());
   const [inTime, setInTime] = useState('');
   const [outTime, setOutTime] = useState('');
   const [location, setLocation] = useState('');
@@ -158,6 +159,9 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
   React.useEffect(() => {
     if (selectedEmp) {
       const empId = String(selectedEmp.id).trim();
+      const empShift = getEmployeeShift(empId);
+      setDate(getTodayShiftDate(empShift));
+
       if (prevEmpIdRef.current !== null && prevEmpIdRef.current !== empId) {
         setLiveLocIn(null);
         setLiveLocOut(null);
@@ -171,6 +175,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     } else {
       prevEmpIdRef.current = null;
       setHasAttemptedAutoLoc(false);
+      setDate(getTodayShiftDate('Day'));
     }
   }, [selectedEmp]);
 
@@ -362,9 +367,14 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     }
     
     // STRICT REMARK VALIDATION
+    const empShift = selectedEmp ? getEmployeeShift(selectedEmp.id) : 'Day';
     const [h, m] = inTime.split(':').map(Number);
-    if ((h > 9 || (h === 9 && m > 15)) && !lateRemark.trim()) {
-      return alert("দুঃখিত! আপনি সকাল ০৯:১৫ এর পরে এসেছেন। \n\nদেরি হওয়ার কারণ (Late Remark) অবশ্যই লিখতে হবে, তা না হলে এন্ট্রি সেভ হবে না।");
+    const isLate = empShift === 'Night'
+      ? (h > 20 || (h === 20 && m > 15))
+      : (h > 9 || (h === 9 && m > 15));
+    if (isLate && !lateRemark.trim()) {
+      const lateTimeStr = empShift === 'Night' ? "রাত ০৮:১৫" : "সকাল ০৯:১৫";
+      return alert(`দুঃখিত! আপনি ${lateTimeStr} এর পরে এসেছেন। \n\nদেরি হওয়ার কারণ (Late Remark) অবশ্যই লিখতে হবে, তা না হলে এন্ট্রি সেভ হবে না।`);
     }
 
     let finalLocOut = liveLocOut;
@@ -381,8 +391,8 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
       setLiveLocOut(finalLocOut);
     }
     
-    // Final check for user mode: ensure we use current date if not admin
-    const captureDate = viewMode === 'admin' ? date : new Date().toISOString().split('T')[0];
+    // Final check for user mode: ensure we use current shift date if not admin
+    const captureDate = viewMode === 'admin' ? date : getTodayShiftDate(empShift);
     
     setSaving(true);
     setSaveStatus('idle');

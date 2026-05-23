@@ -4,6 +4,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { FileSpreadsheet, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
 
 interface Props {
     employees: any[];
@@ -31,7 +32,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
     const daysInMonth = new Date(year, month, 0).getDate();
     const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-    const todayISO = new Date().toISOString().split('T')[0];
+    const todayISO = getTodayShiftDate();
 
     const getStatusInfo = (status: string) => {
         return STATUS_OPTIONS.find(o => o.value === status) || STATUS_OPTIONS[1]; // default to Absent if not found but record exists? No, typically if record exists it has a status.
@@ -79,7 +80,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
             days.forEach(d => {
                 const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
                 const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
-                const isFuture = dateISO > todayISO;
+                const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(emp.id));
                 
                 let label = '';
                 if (record) {
@@ -118,7 +119,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
             days.forEach(d => {
                 const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
                 const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
-                const isFuture = dateISO > todayISO;
+                const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(emp.id));
                 
                 let label = '';
                 if (record) {
@@ -203,7 +204,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
                             {days.map(d => {
                                 const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
                                 const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
-                                const isFuture = dateISO > todayISO;
+                                const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(emp.id));
                                 let currentStatus = record ? record.status : (isFuture ? '-' : 'Absent');
                                 
                                 if (currentStatus === 'Manual') currentStatus = 'Present';

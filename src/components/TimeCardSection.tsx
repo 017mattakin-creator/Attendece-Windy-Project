@@ -4,6 +4,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { FileSpreadsheet, FileText, Loader2, MapPin } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
 
 interface Props {
     employees: any[];
@@ -73,7 +74,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
     days.forEach(d => {
         const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const record = empAttendance.find(a => a.dateISO === dateISO);
-        const isFuture = dateISO > new Date().toISOString().split('T')[0];
+        const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
         const status = getStatusDisplay(record, isFuture);
 
         if (status.label === '-') return;
@@ -140,7 +141,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
         const data = days.map(d => {
             const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             const record = empAttendance.find(a => a.dateISO === dateISO);
-            const isFuture = dateISO > new Date().toISOString().split('T')[0];
+            const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
             const status = getStatusDisplay(record, isFuture);
             const base = {
                 'Date': dateISO,
@@ -220,7 +221,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
         const body = days.map(d => {
             const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             const record = empAttendance.find(a => a.dateISO === dateISO);
-            const isFuture = dateISO > new Date().toISOString().split('T')[0];
+            const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
             const status = getStatusDisplay(record, isFuture);
             return [
                 dateISO,
@@ -291,7 +292,14 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                           <div className="w-16 h-16 bg-stone-800 text-white rounded-full flex items-center justify-center font-bold text-xl ring-4 ring-stone-50 shadow-sm">{employee.name.charAt(0)}</div>
                           <div>
                               <h3 className="font-bold text-xl text-stone-900">{employee.name}</h3>
-                              <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">{employee.designation} • Category: {employee.category} • ID: {employee.id}</p>
+                              <p className="text-xs font-medium text-stone-500 uppercase tracking-wider flex items-center flex-wrap gap-2">
+                                  <span>{employee.designation} • Category: {employee.category} • ID: {employee.id}</span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                      getEmployeeShift(employee.id) === 'Night' ? 'bg-indigo-50 border border-indigo-150 text-indigo-700' : 'bg-amber-50 border border-amber-100 text-amber-800'
+                                  }`}>
+                                      {getEmployeeShift(employee.id) === 'Night' ? '🌙 NIGHT SHIFT' : '☀️ DAY SHIFT'}
+                                  </span>
+                              </p>
                           </div>
                       </div>
                       
@@ -357,7 +365,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                                   {days.map(d => {
                                       const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
                                       const record = empAttendance.find(a => a.dateISO === dateISO);
-                                      const isFuture = dateISO > new Date().toISOString().split('T')[0];
+                                      const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
                                       const status = getStatusDisplay(record, isFuture);
 
                                       return (

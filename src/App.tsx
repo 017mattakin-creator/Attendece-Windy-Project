@@ -18,6 +18,7 @@ import LocationSection from './components/LocationSection';
 import UploadSection from './components/UploadSection';
 import ManualEntrySection from './components/ManualEntrySection';
 import LiveLocationMap from './components/LiveLocationMap';
+import { getTodayShiftDate, formatSystemDate, getEmployeeShift, getShiftDateForTime, parseCombinedDateTimeToLocal, getShiftRelativeMinutes, cacheDbShift, parseEducationAndShift } from './lib/dateUtils';
 
 interface AttendanceRecord {
   name: string;
@@ -64,10 +65,37 @@ export default function App() {
       const { data: emplData, error: emplError } = await supabase.from('employees').select('*');
       if (emplError) console.error('Error fetching employees:', emplError);
       else if (emplData) {
-        const normalized = emplData.map((e: any) => ({
-          ...e,
-          id: String(e.id).trim()
-        }));
+        const normalized = emplData.map((e: any) => {
+          const empId = String(e.id).trim();
+          const { education, shift } = parseEducationAndShift(e.education);
+          
+          let finalShift: 'Day' | 'Night' = shift;
+          const hasDbShift = e.education && (String(e.education).endsWith('|Day') || String(e.education).endsWith('|Night'));
+          
+          if (!hasDbShift) {
+            // If DB doesn't have an encoded shift yet, check if there is an existing legacy local shift in the browser.
+            const savedLocal = localStorage.getItem(`emp_shift_${empId}`);
+            if (savedLocal === 'Day' || savedLocal === 'Night') {
+              finalShift = savedLocal;
+              // Sync legacy local shift to database so it is permanently synchronized and not lost!
+              const encodedEducation = `${education}|${finalShift}`;
+              supabase.from('employees').update({ education: encodedEducation }).eq('id', empId)
+                .then(({ error }) => {
+                  if (error) console.error(`Failed to migrate legacy local shift for employee ${empId}:`, error);
+                  else console.log(`Migrated legacy local shift for employee ${empId} to DB: ${finalShift}`);
+                });
+            }
+          }
+          
+          cacheDbShift(empId, finalShift);
+          return {
+            ...e,
+            id: empId,
+            education: education,
+            joinDate: e.join_date || e.joinDate || '',
+            phoneNumber: e.phone_number || e.phoneNumber || ''
+          };
+        });
         setEmployees(normalized as Employee[]);
       }
 
@@ -175,8 +203,8 @@ export default function App() {
           const empIdSet = new Set(allEmps?.map(e => String(e.id).trim()) || []);
           console.log('Valid employee IDs:', Array.from(empIdSet));
 
-          // Group by empId and date to find min/max times
-          const groupedData: Record<string, { empId: string, date: string, times: string[], idKey?: string, locationId?: string }> = {};
+          // Group by empId and shift-aware date to find min/max times chronologically
+          const groupedData: Record<string, { empId: string, date: string, punches: Array<{ time: Date, timeStr: string }>, idKey?: string, locationId?: string }> = {};
           let skippedCount = 0;
           let uniqueSkippedIds = new Set<string>();
 
@@ -193,60 +221,30 @@ export default function App() {
 
              if (empId && dateTimeStr && empIdSet.has(empId)) {
                 try {
-                    const cleanDateTime = dateTimeStr.trim();
-                    let dateObj = new Date(cleanDateTime);
-                    
-                    // Specific handler for DD-MMM-YY or DD-MMM-YYYY format with optional time
-                    const dmyMatch = cleanDateTime.match(/^(\d{1,2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2,4})(.*)$/i);
-                    if (dmyMatch) {
-                        const monthMap: Record<string, number> = {
-                            jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11
-                        };
-                        const day = parseInt(dmyMatch[1]);
-                        const month = monthMap[dmyMatch[2].toLowerCase()];
-                        let year = parseInt(dmyMatch[3]);
-                        if (year < 100) year += 2000;
-                        
-                        const timeStrPart = dmyMatch[4].trim();
-                        if (timeStrPart) {
-                            dateObj = new Date(dateTimeStr); // Try standard parsing if time exists
-                            // If standard parsing fails or still gives wrong day, force it
-                            if (isNaN(dateObj.getTime()) || dateObj.getDate() !== day) {
-                                dateObj = new Date(year, month, day);
-                                const tMatch = timeStrPart.match(/(\d{1,2})\s*[:.]\s*(\d{1,2})(?:\s*(am|pm))?/i);
-                                if (tMatch) {
-                                    let h = parseInt(tMatch[1]);
-                                    const m = parseInt(tMatch[2]);
-                                    const ampm = tMatch[3]?.toLowerCase();
-                                    if (ampm === 'pm' && h < 12) h += 12;
-                                    if (ampm === 'am' && h === 12) h = 0;
-                                    dateObj.setHours(h, m, 0, 0);
-                                }
-                            }
-                        } else {
-                            dateObj = new Date(year, month, day);
-                        }
-                    }
+                    const dateObj = parseCombinedDateTimeToLocal(dateTimeStr);
 
-                    if (!isNaN(dateObj.getTime())) {
-                        const y = dateObj.getFullYear();
-                        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-                        const d = String(dateObj.getDate()).padStart(2, '0');
-                        const dateIso = `${y}-${m}-${d}`;
+                    if (dateObj && !isNaN(dateObj.getTime())) {
+                        const empShift = getEmployeeShift(empId);
+                        const dateIso = getShiftDateForTime(dateObj, empShift);
                         
-                        const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                        const hh = String(dateObj.getHours()).padStart(2, '0');
+                        const mm = String(dateObj.getMinutes()).padStart(2, '0');
+                        const timeStr = `${hh}:${mm}`;
                         const key = `${empId}_${dateIso}`;
 
                         if (!groupedData[key]) {
                             groupedData[key] = {
                                 empId,
                                 date: dateIso,
-                                times: [],
+                                punches: [],
                                 idKey: rec['ID Number'] || rec.idKey || rec.idNumber || null,
                                 locationId: rec['Location ID'] || rec.locationId || null
                             };
                         }
-                        groupedData[key].times.push(timeStr);
+                        groupedData[key].punches.push({
+                            time: dateObj,
+                            timeStr: timeStr
+                        });
                     }
                 } catch (e) {
                     console.error("Error parsing date:", dateTimeStr, e);
@@ -258,33 +256,218 @@ export default function App() {
              }
 
              if (i % Math.max(1, Math.floor(rawData.length / 10)) === 0) {
-                setUploadProgress(Math.round(((i + 1) / rawData.length) * 40)); 
+                setUploadProgress(Math.round(((i + 1) / rawData.length) * 30)); 
              }
           }
 
+          // Gather unique employee IDs and shift dates involved in this file upload
+          const empIdsToFetch = Array.from(new Set(Object.values(groupedData).map((g: any) => g.empId)));
+          
+          const datesToFetchSet = new Set<string>();
+          Object.values(groupedData).forEach((g: any) => {
+              datesToFetchSet.add(g.date);
+              // Also add the next day ISO to fetch any pre-existing duplicates that may have slipped to tomorrow
+              const parts = g.date.split('-');
+              if (parts.length === 3) {
+                  const [ystr, mstr, dstr] = parts;
+                  const dateObj = new Date(parseInt(ystr, 10), parseInt(mstr, 10) - 1, parseInt(dstr, 10) + 1);
+                  const y = dateObj.getFullYear();
+                  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+                  const d = String(dateObj.getDate()).padStart(2, '0');
+                  datesToFetchSet.add(`${y}-${m}-${d}`);
+              }
+          });
+          const datesToFetch = Array.from(datesToFetchSet);
+
+          // Fetch existing attendance records from the DB in chunks to prevent URL length limits, or fully if small
+          const existingMap: Record<string, any> = {};
+          
+          if (empIdsToFetch.length > 0 && datesToFetch.length > 0) {
+              const fetchChunkSize = 100;
+              for (let i = 0; i < empIdsToFetch.length; i += fetchChunkSize) {
+                  const empChunk = empIdsToFetch.slice(i, i + fetchChunkSize);
+                  const { data: records, error: fetchError } = await supabase
+                      .from('attendance')
+                      .select('*')
+                      .in('employee_id', empChunk)
+                      .in('date_iso', datesToFetch);
+                  
+                  if (!fetchError && records) {
+                      records.forEach((r: any) => {
+                          const key = `${String(r.employee_id).trim()}_${r.date_iso}`;
+                          existingMap[key] = r;
+                      });
+                  }
+              }
+          }
+
+          setUploadProgress(35);
+
+          // Now merge existing check-in/out times with newly uploaded punches
           const attendanceData = Object.values(groupedData).map((group: any) => {
-              const sortedTimes = group.times.sort();
-              const inTime = sortedTimes[0];
-              const outTime = sortedTimes.length > 1 ? sortedTimes[sortedTimes.length - 1] : null;
+              const empId = group.empId;
+              const dateIso = group.date;
+              const key = `${empId}_${dateIso}`;
+              const existing = existingMap[key];
+              const empShift = getEmployeeShift(empId);
+
+              // Split the punches in group.punches based on the user's rule:
+              // Starting from the first day, starting from after midnight (12:00 AM) of the next day, up to morning 06:00 AM will be the Out Time.
+              const firstDayPunches: Array<{ time: Date; timeStr: string }> = [];
+              const nextDayLatePunches: Array<{ time: Date; timeStr: string }> = [];
+
+              if (dateIso) {
+                  try {
+                      const [ystr, mstr, dstr] = dateIso.split('-');
+                      const year = parseInt(ystr, 10);
+                      const month = parseInt(mstr, 10) - 1;
+                      const day = parseInt(dstr, 10);
+                      
+                      // Midnight (00:00:00) of the next day
+                      const nextDayStart = new Date(year, month, day + 1, 0, 0, 0, 0);
+                      // 06:00 AM of the next day
+                      const nextDayEnd = new Date(year, month, day + 1, 6, 0, 0, 0);
+
+                      group.punches.forEach((p: any) => {
+                          const tVal = p.time.getTime();
+                          if (tVal >= nextDayStart.getTime() && tVal <= nextDayEnd.getTime()) {
+                              nextDayLatePunches.push(p);
+                          } else {
+                              firstDayPunches.push(p);
+                          }
+                      });
+                  } catch (e) {
+                      console.error("Error classifying punches based on dates:", e);
+                      firstDayPunches.push(...group.punches);
+                  }
+              } else {
+                  firstDayPunches.push(...group.punches);
+              }
+
+              // De-duplicate and sort times within lists
+              const uniqueFirst = Array.from(new Set(firstDayPunches.map(p => p.timeStr)))
+                  .map(tStr => firstDayPunches.find(p => p.timeStr === tStr)!)
+                  .sort((a, b) => a.time.getTime() - b.time.getTime());
+
+              const uniqueNext = Array.from(new Set(nextDayLatePunches.map(p => p.timeStr)))
+                  .map(tStr => nextDayLatePunches.find(p => p.timeStr === tStr)!)
+                  .sort((a, b) => a.time.getTime() - b.time.getTime());
+
+              let inTime: string | null = null;
+              let outTime: string | null = null;
+
+              if (uniqueFirst.length > 0) {
+                  inTime = uniqueFirst[0].timeStr;
+                  if (uniqueNext.length > 0) {
+                      outTime = uniqueNext[uniqueNext.length - 1].timeStr;
+                  } else if (uniqueFirst.length > 1) {
+                      outTime = uniqueFirst[uniqueFirst.length - 1].timeStr;
+                  }
+              } else if (uniqueNext.length > 0) {
+                  // Only next-day midnight-to-6am punches exist (missed check-in on first day)
+                  outTime = uniqueNext[uniqueNext.length - 1].timeStr;
+              }
 
               return {
-                  employee_id: group.empId,
-                  date_iso: group.date,
+                  ...(existing || {}),
+                  employee_id: empId,
+                  date_iso: dateIso,
                   sys_in_time: inTime,
                   sys_out_time: outTime,
                   manual_in_time: inTime,
                   manual_out_time: outTime,
-                  id_number: group.idKey,
-                  location_id: group.locationId,
-                  status: 'Present'
+                  id_number: group.idKey || (existing ? existing.id_number : null),
+                  location_id: group.locationId || (existing ? existing.location_id : null),
+                  status: (existing && existing.status) ? existing.status : 'Present'
               };
           });
+
+          // Inline helper to subtract 1 day from Date ISO (e.g. "2026-05-23" -> "2026-05-22")
+          const getPreviousDateISO = (dateStr: string): string => {
+              const parts = dateStr.split('-');
+              if (parts.length !== 3) return dateStr;
+              const [ystr, mstr, dstr] = parts;
+              const dateObj = new Date(parseInt(ystr, 10), parseInt(mstr, 10) - 1, parseInt(dstr, 10) - 1);
+              const y = dateObj.getFullYear();
+              const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+              const d = String(dateObj.getDate()).padStart(2, '0');
+              return `${y}-${m}-${d}`;
+          };
+
+          // Post-processing sanitation of early morning checkins:
+          // If any record in attendanceData has a sys_in_time between 12:00 AM and 06:00 AM (Day shift) or 08:00 AM (Night shift),
+          // it belongs to the previous day's shift as an out-time.
+          const finalAttendanceMap: Record<string, any> = {};
+          
+          // Seed with all fetched existing database records so mismatching duplicates from any previously uploaded date
+          // can be cleaned up automatically during any re-upload!
+          Object.keys(existingMap).forEach((key) => {
+              finalAttendanceMap[key] = { ...existingMap[key] };
+          });
+          
+          attendanceData.forEach((item: any) => {
+              const key = `${item.employee_id}_${item.date_iso}`;
+              finalAttendanceMap[key] = { ...item };
+          });
+
+          // Scan all entries for early morning check-ins and redirect them to the previous day as a check-out
+          Object.keys(finalAttendanceMap).forEach((key) => {
+              const item = finalAttendanceMap[key];
+              if (!item.sys_in_time) return;
+
+              const [hhStr] = item.sys_in_time.split(':');
+              const hh = parseInt(hhStr, 10);
+              const empShift = getEmployeeShift(item.employee_id);
+              const thresholdHour = empShift === 'Night' ? 8 : 6;
+
+              if (hh < thresholdHour) {
+                  const shiftTimeVal = item.sys_in_time;
+                  const prevDateIso = getPreviousDateISO(item.date_iso);
+                  const prevKey = `${item.employee_id}_${prevDateIso}`;
+
+                  if (finalAttendanceMap[prevKey]) {
+                      finalAttendanceMap[prevKey].sys_out_time = shiftTimeVal;
+                      finalAttendanceMap[prevKey].manual_out_time = shiftTimeVal;
+                      finalAttendanceMap[prevKey].status = finalAttendanceMap[prevKey].status === 'OffDay' ? 'OffDay' : 'Present';
+                  } else {
+                      const prevExisting = existingMap[prevKey];
+                      finalAttendanceMap[prevKey] = {
+                          ...(prevExisting || {}),
+                          employee_id: item.employee_id,
+                          date_iso: prevDateIso,
+                          sys_in_time: prevExisting ? prevExisting.sys_in_time : null,
+                          sys_out_time: shiftTimeVal,
+                          manual_in_time: prevExisting ? prevExisting.manual_in_time : null,
+                          manual_out_time: shiftTimeVal,
+                          id_number: item.id_number,
+                          location_id: item.location_id,
+                          status: (prevExisting && prevExisting.status) ? prevExisting.status : 'Present'
+                      };
+                  }
+
+                  // Clear current day's misplaced check-in/out times
+                  item.sys_in_time = null;
+                  item.sys_out_time = null;
+                  item.manual_in_time = null;
+                  item.manual_out_time = null;
+                  item.status = 'Absent';
+              }
+          });
+
+          const sanitizedAttendanceData = Object.values(finalAttendanceMap).filter((item: any) => {
+              const existed = !!(item.id || existingMap[`${item.employee_id}_${item.date_iso}`]);
+              const hasPunches = !!(item.sys_in_time || item.sys_out_time || item.manual_in_time || item.manual_out_time);
+              const isNonAbsent = item.status && item.status !== 'Absent';
+              return existed || hasPunches || isNonAbsent;
+          });
+
+          setUploadProgress(40);
 
           let errorCount = 0;
           // Batch upsert in chunks
           const chunkSize = 50;
-          for (let i = 0; i < attendanceData.length; i += chunkSize) {
-            const chunk = attendanceData.slice(i, i + chunkSize);
+          for (let i = 0; i < sanitizedAttendanceData.length; i += chunkSize) {
+            const chunk = sanitizedAttendanceData.slice(i, i + chunkSize);
             const { error: upsertError } = await supabase
               .from('attendance')
               .upsert(chunk, { onConflict: 'employee_id,date_iso' });
@@ -294,10 +477,10 @@ export default function App() {
               errorCount += chunk.length;
             }
             
-            setUploadProgress(40 + Math.round(((i + chunk.length) / attendanceData.length) * 60));
+            setUploadProgress(40 + Math.round(((i + chunk.length) / sanitizedAttendanceData.length) * 60));
           }
 
-          let msg = `Upload process finished.\n- ${attendanceData.length - errorCount} records updated successfully.`;
+          let msg = `Upload process finished.\n- ${sanitizedAttendanceData.length - errorCount} records updated successfully.`;
           if (errorCount > 0) msg += `\n- ${errorCount} records failed to save.`;
           if (skippedCount > 0) msg += `\n- ${skippedCount} items skipped because employee IDs were not found in directory.`;
           
@@ -398,7 +581,14 @@ export default function App() {
                 >
                   <div className="text-[9px] md:text-[10px] uppercase font-bold text-green-600 tracking-widest leading-tight group-hover:underline">Present Today</div>
                   <div className="text-xl md:text-3xl font-serif italic text-green-700 leading-none">
-                    {attendance.filter(a => a.dateISO === new Date().toISOString().split('T')[0] && (a.status === 'Present' || a.status === 'Manual')).length}
+                    {(() => {
+                      const presentCount = employees.filter(emp => {
+                        const shift = getEmployeeShift(emp.id);
+                        const targetDate = getTodayShiftDate(shift);
+                        return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                      }).length;
+                      return presentCount;
+                    })()}
                   </div>
                 </button>
               </div>
@@ -411,13 +601,20 @@ export default function App() {
                 >
                   <div className="text-[9px] md:text-[10px] uppercase font-bold text-red-500 tracking-widest leading-tight group-hover:underline">Absent Today</div>
                   <div className="text-xl md:text-3xl font-serif italic text-red-600 leading-none">
-                    {employees.length - attendance.filter(a => a.dateISO === new Date().toISOString().split('T')[0] && (a.status === 'Present' || a.status === 'Manual')).length}
+                    {(() => {
+                      const presentCount = employees.filter(emp => {
+                        const shift = getEmployeeShift(emp.id);
+                        const targetDate = getTodayShiftDate(shift);
+                        return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                      }).length;
+                      return employees.length - presentCount;
+                    })()}
                   </div>
                 </button>
                 <div className="w-px bg-stone-100 my-4"></div>
                 <div className="flex-1 p-4 md:p-6 flex flex-col gap-1 text-right">
                   <div className="text-[9px] md:text-[10px] uppercase font-bold text-stone-500 tracking-widest leading-tight">System Date</div>
-                  <div className="text-xs md:text-sm font-bold text-stone-800 leading-none uppercase">{new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+                  <div className="text-xs md:text-sm font-bold text-stone-800 leading-none uppercase">{formatSystemDate(getTodayShiftDate())}</div>
                 </div>
               </div>
             </div>
@@ -436,14 +633,15 @@ export default function App() {
                   </div>
                   <div className="overflow-y-auto p-2">
                     {(() => {
-                      const today = new Date().toISOString().split('T')[0];
-                      const presentIds = attendance
-                        .filter(a => a.dateISO === today && (a.status === 'Present' || a.status === 'Manual'))
-                        .map(a => a.no);
+                      const isEmpPresent = (empId: string) => {
+                        const shift = getEmployeeShift(empId);
+                        const targetDate = getTodayShiftDate(shift);
+                        return attendance.some(a => a.no === empId && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                      };
                       
                       const list = showList === 'present' 
-                        ? employees.filter(e => presentIds.includes(e.id))
-                        : employees.filter(e => !presentIds.includes(e.id));
+                        ? employees.filter(e => isEmpPresent(e.id))
+                        : employees.filter(e => !isEmpPresent(e.id));
 
                       if (list.length === 0) {
                         return <div className="p-8 text-center text-stone-400 italic">No records found.</div>;
@@ -451,21 +649,33 @@ export default function App() {
 
                       return (
                         <div className="divide-y divide-stone-100">
-                          {list.map(emp => (
-                            <div key={emp.id} className="p-3 flex justify-between items-center hover:bg-stone-50">
-                              <div>
-                                <div className="text-sm font-bold text-stone-800">{emp.name}</div>
-                                <div className="text-[10px] text-stone-500 uppercase tracking-tighter">ID: {emp.id} • {emp.designation}</div>
+                          {list.map(emp => {
+                            const shift = getEmployeeShift(emp.id);
+                            const targetDate = getTodayShiftDate(shift);
+                            return (
+                              <div key={emp.id} className="p-3 flex justify-between items-center hover:bg-stone-50">
+                                <div>
+                                  <div className="text-sm font-bold text-stone-800">{emp.name}</div>
+                                  <div className="text-[10px] text-stone-500 uppercase tracking-tighter flex items-center gap-1">
+                                    <span>ID: {emp.id} • {emp.designation}</span>
+                                    <span className={`px-1 rounded-[2px] leading-tight text-[8px] font-bold ${
+                                      shift === 'Night' ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'
+                                    }`}>
+                                      {shift === 'Night' ? 'NIGHT' : 'DAY'}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="text-[10px] text-stone-400 font-mono">
+                                  {showList === 'present' ? (
+                                    attendance.find(a => a.dateISO === targetDate && a.no === emp.id)?.sysInTime || 
+                                    attendance.find(a => a.dateISO === targetDate && a.no === emp.id)?.manualInTime || '-'
+                                  ) : (
+                                    'OFFLINE'
+                                  )}
+                                </div>
                               </div>
-                              <div className="text-[10px] text-stone-400 font-mono">
-                                {showList === 'present' ? (
-                                  attendance.find(a => a.dateISO === today && a.no === emp.id)?.sysInTime || '-'
-                                ) : (
-                                  'OFFLINE'
-                                )}
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       );
                     })()}
@@ -534,7 +744,7 @@ export default function App() {
             }
         }} />}
         {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} progress={uploadProgress} />}
-        {activeSection === 'comparison' && <ComparisonSection employees={employees} attendance={attendance} />}
+        {activeSection === 'comparison' && viewMode === 'admin' && <ComparisonSection employees={employees} attendance={attendance} locations={locations} />}
         {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
           </>

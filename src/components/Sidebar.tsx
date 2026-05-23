@@ -18,8 +18,8 @@ export default function Sidebar({ activeSection, setActiveSection, viewMode, isO
         { id: 'locations', name: 'Locations', icon: MapPin },
         { id: 'attendance', name: 'Attendance', icon: Table },
         { id: 'upload', name: 'Upload Data', icon: Upload },
+        { id: 'comparison', name: 'Comparison', icon: BarChart3 },
     ] : []),
-    { id: 'comparison', name: 'Comparison', icon: BarChart3 },
     { id: 'monthly', name: 'Monthly Report', icon: Table },
     { id: 'timecard', name: 'Time Card', icon: Clock },
   ];

@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { FileSpreadsheet, FileText, MapPin } from 'lucide-react';
+import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
 
 interface AttendanceRecord {
   name: string;
@@ -33,7 +34,7 @@ interface Props {
 
 export default function AttendanceSection({ attendance, employees, locations, viewMode, onUpdateAttendance }: Props) {
     const [filterEmp, setFilterEmp] = useState('');
-    const [filterDate, setFilterDate] = useState(new Date().toISOString().split('T')[0]);
+    const [filterDate, setFilterDate] = useState(getTodayShiftDate());
     
     // Create matrix view
     const renderData = employees.map(emp => {
@@ -209,7 +210,16 @@ function EditableRow({ item, date, locations, onSave, viewMode }: { item: any, d
     return (
         <tr className="border-b border-stone-100 hover:bg-stone-50 transition-colors">
             <td className="px-3 py-3 font-medium text-stone-900">{item.emp.id}</td>
-            <td className="px-3 py-3 font-medium text-stone-800">{item.emp.name}</td>
+            <td className="px-3 py-3">
+                <div className="font-medium text-stone-800">{item.emp.name}</div>
+                <div className="text-[9px] mt-0.5 whitespace-nowrap">
+                    {getEmployeeShift(item.emp.id) === 'Night' ? (
+                        <span className="bg-indigo-50 border border-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-sm font-semibold tracking-wide">🌙 Night Shift</span>
+                    ) : (
+                        <span className="bg-amber-50 border border-amber-100/50 text-amber-800 px-1.5 py-0.5 rounded-sm font-semibold tracking-wide">☀️ Day Shift</span>
+                    )}
+                </div>
+            </td>
             <td className="px-3 py-3">
                 <input 
                     type="text" 
