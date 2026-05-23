@@ -24,6 +24,22 @@ const STATUS_OPTIONS = [
     { label: 'O', value: 'OffDay', color: 'text-stone-500', bg: 'bg-stone-50' },
 ];
 
+const STAFF_IDS = [
+  '16153', '15439', '16325', '15524', '16135', '16117', '15525', '15641', '16254', '15608', '16279', 
+  '15590', '15832', '16187', '15548', '16110', '16004', '16114', '16270', '16099', '16193', '16009', '15973', '16156'
+];
+
+const isStaffEmployee = (emp: any) => {
+  const idValue = String(emp.id).trim();
+  if (STAFF_IDS.includes(idValue)) return true;
+  const cat = (emp.category || '').toLowerCase().trim();
+  if (cat.includes('staff')) return true;
+  if (cat.includes('security') || cat.includes('guard')) return false;
+  const desig = (emp.designation || '').toLowerCase().trim();
+  if (desig.includes('security') || desig.includes('guard') || desig.includes('ansar')) return false;
+  return true;
+};
+
 export default function MonthlyReportSection({ employees, attendance, onRefresh, viewMode }: Props) {
     const [month, setMonth] = useState(new Date().getMonth() + 1);
     const [year, setYear] = useState(new Date().getFullYear());
@@ -33,6 +49,22 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
     const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
     const todayISO = getTodayShiftDate();
+
+    const sortedEmployees = [...employees].sort((a, b) => {
+        const isStaffA = isStaffEmployee(a);
+        const isStaffB = isStaffEmployee(b);
+        if (isStaffA && !isStaffB) return -1;
+        if (!isStaffA && isStaffB) return 1;
+        
+        if (isStaffA && isStaffB) {
+            const idxA = STAFF_IDS.indexOf(String(a.id).trim());
+            const idxB = STAFF_IDS.indexOf(String(b.id).trim());
+            if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+            if (idxA !== -1) return -1;
+            if (idxB !== -1) return 1;
+        }
+        return String(a.id).localeCompare(String(b.id));
+    });
 
     const getStatusInfo = (status: string) => {
         return STATUS_OPTIONS.find(o => o.value === status) || STATUS_OPTIONS[1]; // default to Absent if not found but record exists? No, typically if record exists it has a status.
@@ -70,7 +102,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
     };
 
     const exportToExcel = () => {
-        const data = employees.map(emp => {
+        const data = sortedEmployees.map(emp => {
             const row: any = {
                 'Employee ID': emp.id,
                 'Name': emp.name,
@@ -110,7 +142,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
         
         const uniqueLabels = Array.from(new Set(STATUS_OPTIONS.map(o => o.label)));
         const head = [['ID', 'Name', ...days.map(String), ...uniqueLabels]];
-        const body = employees.map(emp => {
+        const body = sortedEmployees.map(emp => {
             const counts: Record<string, number> = {};
             uniqueLabels.forEach(l => counts[l] = 0);
             counts['A'] = 0;
@@ -192,7 +224,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
                   </tr>
                </thead>
                <tbody className="divide-y divide-stone-100">
-                  {employees.map(emp => {
+                  {sortedEmployees.map(emp => {
                       const counts: Record<string, number> = {};
                       STATUS_OPTIONS.forEach(s => counts[s.label] = 0);
                       counts['A'] = 0; // Ensure A is there even if not in options label

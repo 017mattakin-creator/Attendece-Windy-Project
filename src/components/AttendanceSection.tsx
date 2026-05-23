@@ -32,18 +32,53 @@ interface Props {
     onUpdateAttendance: (record: any) => void;
 }
 
+const STAFF_IDS = [
+  '16153', '15439', '16325', '15524', '16135', '16117', '15525', '15641', '16254', '15608', '16279', 
+  '15590', '15832', '16187', '15548', '16110', '16004', '16114', '16270', '16099', '16193', '16009', '15973', '16156'
+];
+
+const isStaffEmployee = (emp: any) => {
+  const idValue = String(emp.id).trim();
+  if (STAFF_IDS.includes(idValue)) return true;
+  const cat = (emp.category || '').toLowerCase().trim();
+  if (cat.includes('staff')) return true;
+  if (cat.includes('security') || cat.includes('guard')) return false;
+  const desig = (emp.designation || '').toLowerCase().trim();
+  if (desig.includes('security') || desig.includes('guard') || desig.includes('ansar')) return false;
+  return true;
+};
+
 export default function AttendanceSection({ attendance, employees, locations, viewMode, onUpdateAttendance }: Props) {
     const [filterEmp, setFilterEmp] = useState('');
     const [filterDate, setFilterDate] = useState(getTodayShiftDate());
     
     // Create matrix view
-    const renderData = employees.map(emp => {
+    const rawRenderData = employees.map(emp => {
         const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === filterDate);
         return {
             emp,
             record: record || { manualInTime: '', manualOutTime: '', sysInTime: '', sysOutTime: '', locationId: '', live_location: '', live_location_in: '', live_location_out: '', late_remark: '' }
         };
     }).filter(item => filterEmp === '' || item.emp.id === filterEmp);
+
+    const renderData = [...rawRenderData].sort((a, b) => {
+        const isStaffA = isStaffEmployee(a.emp);
+        const isStaffB = isStaffEmployee(b.emp);
+        if (isStaffA && !isStaffB) return -1;
+        if (!isStaffA && isStaffB) return 1;
+        
+        if (isStaffA && isStaffB) {
+            const idxA = STAFF_IDS.indexOf(String(a.emp.id).trim());
+            const idxB = STAFF_IDS.indexOf(String(b.emp.id).trim());
+            if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+            if (idxA !== -1) return -1;
+            if (idxB !== -1) return 1;
+        }
+        return String(a.emp.id).localeCompare(String(b.emp.id));
+    });
+
+    const staffAttendance = renderData.filter(item => isStaffEmployee(item.emp));
+    const securityAttendance = renderData.filter(item => !isStaffEmployee(item.emp));
 
     const exportToExcel = () => {
         const data = renderData.map(item => {
@@ -169,28 +204,84 @@ export default function AttendanceSection({ attendance, employees, locations, vi
                 <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="border border-stone-200 rounded p-2 text-xs" />
             </div>
 
-            <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left text-stone-700">
-                    <thead className="text-[10px] text-stone-500 uppercase border-b border-stone-200">
-                        <tr>
-                            <th className="px-3 py-3">ID</th>
-                            <th className="px-3 py-3">Name</th>
-                            <th className="px-3 py-3">In Time</th>
-                            <th className="px-3 py-3">Out Time</th>
-                            <th className="px-3 py-3">Location</th>
-                            <th className="px-3 py-3">Remarks</th>
-                            <th className="px-3 py-3">IN Address</th>
-                            <th className="px-3 py-3">OUT Address</th>
-                            {viewMode === 'admin' && <th className="px-3 py-3 text-center">Live Loc</th>}
-                            <th className="px-3 py-3">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {renderData.map((item, i) => (
-                            <EditableRow key={i} item={item} date={filterDate} locations={locations} onSave={onUpdateAttendance} viewMode={viewMode} />
-                        ))}
-                    </tbody>
-                </table>
+            {/* Table 1: Staff Attendance */}
+            <div className="mb-8 bg-amber-50/10 border border-amber-100 p-4 md:p-6 rounded-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 pb-2 border-b border-amber-100">
+                    <h3 className="text-xs font-extrabold uppercase tracking-widest text-amber-905 flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                        Staff Attendance Report (স্টাফ হাজিরা - {staffAttendance.length})
+                    </h3>
+                    <span className="text-[9px] bg-amber-50 border border-amber-200 text-amber-800 px-2 py-0.5 rounded-sm font-bold uppercase mt-1 sm:mt-0">
+                      Office / Support Force
+                    </span>
+                </div>
+                {staffAttendance.length === 0 ? (
+                    <div className="p-8 text-center text-stone-400 italic text-xs">No Staff matched criteria.</div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-xs text-left text-stone-700">
+                            <thead className="text-[10px] text-stone-500 uppercase border-b border-stone-200">
+                                <tr>
+                                    <th className="px-3 py-3">ID</th>
+                                    <th className="px-3 py-3">Name</th>
+                                    <th className="px-3 py-3">In Time</th>
+                                    <th className="px-3 py-3">Out Time</th>
+                                    <th className="px-3 py-3">Location</th>
+                                    <th className="px-3 py-3">Remarks</th>
+                                    <th className="px-3 py-3">IN Address</th>
+                                    <th className="px-3 py-3">OUT Address</th>
+                                    {viewMode === 'admin' && <th className="px-3 py-3 text-center">Live Loc</th>}
+                                    <th className="px-3 py-3">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {staffAttendance.map((item, i) => (
+                                    <EditableRow key={i} item={item} date={filterDate} locations={locations} onSave={onUpdateAttendance} viewMode={viewMode} />
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
+
+            {/* Table 2: Security Attendance */}
+            <div className="bg-indigo-50/10 border border-indigo-100 p-4 md:p-6 rounded-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 pb-2 border-b border-indigo-100">
+                    <h3 className="text-xs font-extrabold uppercase tracking-widest text-indigo-950 flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
+                        Security Guard Force (সিকিউরিটি গার্ড হাজিরা - {securityAttendance.length})
+                    </h3>
+                    <span className="text-[9px] bg-indigo-50 border border-indigo-200 text-indigo-800 px-2 py-0.5 rounded-sm font-bold uppercase mt-1 sm:mt-0">
+                      Guard Force
+                    </span>
+                </div>
+                {securityAttendance.length === 0 ? (
+                    <div className="p-8 text-center text-stone-400 italic text-xs">No Security guards matched criteria.</div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-xs text-left text-stone-700">
+                            <thead className="text-[10px] text-stone-500 uppercase border-b border-stone-200">
+                                <tr>
+                                    <th className="px-3 py-3">ID</th>
+                                    <th className="px-3 py-3">Name</th>
+                                    <th className="px-3 py-3">In Time</th>
+                                    <th className="px-3 py-3">Out Time</th>
+                                    <th className="px-3 py-3">Location</th>
+                                    <th className="px-3 py-3">Remarks</th>
+                                    <th className="px-3 py-3">IN Address</th>
+                                    <th className="px-3 py-3">OUT Address</th>
+                                    {viewMode === 'admin' && <th className="px-3 py-3 text-center">Live Loc</th>}
+                                    <th className="px-3 py-3">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {securityAttendance.map((item, i) => (
+                                    <EditableRow key={i} item={item} date={filterDate} locations={locations} onSave={onUpdateAttendance} viewMode={viewMode} />
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </div>
         </section>
     );

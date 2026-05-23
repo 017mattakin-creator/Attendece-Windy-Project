@@ -25,6 +25,29 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
     const [tempShift, setTempShift] = useState<'Day' | 'Night'>('Day');
     const [renderTrigger, setRenderTrigger] = useState(0);
     const [statusMsg, setStatusMsg] = useState<string | null>(null);
+    const [categoryFilter, setCategoryFilter] = useState<'all' | 'staff' | 'security'>('all');
+
+    const STAFF_IDS = [
+      '16153', '15439', '16325', '15524', '16135', '16117', '15525', '15641', '16254', '15608', '16279', 
+      '15590', '15832', '16187', '15548', '16110', '16004', '16114', '16270', '16099', '16193', '16009', '15973', '16156'
+    ];
+
+    const isStaffEmployee = (emp: any) => {
+      const idStr = String(emp.id).trim();
+      if (STAFF_IDS.includes(idStr)) return true;
+      const cat = (emp.category || '').toLowerCase().trim();
+      if (cat.includes('staff')) return true;
+      if (cat.includes('security') || cat.includes('guard')) return false;
+      const desig = (emp.designation || '').toLowerCase().trim();
+      if (desig.includes('security') || desig.includes('guard') || desig.includes('ansar')) return false;
+      return true;
+    };
+
+    const filteredEmployees = employees.filter(emp => {
+      if (categoryFilter === 'staff') return isStaffEmployee(emp);
+      if (categoryFilter === 'security') return !isStaffEmployee(emp);
+      return true;
+    });
 
     // Edit employee state
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -202,6 +225,28 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
                 </div>
             )}
 
+            {/* Category Directory Filter Tabs */}
+            <div className="flex flex-wrap gap-2 mb-4">
+                <button 
+                    onClick={() => setCategoryFilter('all')}
+                    className={`px-4 py-2 text-xs font-bold uppercase rounded-sm border transition-all ${categoryFilter === 'all' ? 'bg-stone-800 border-stone-800 text-white shadow-xs' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
+                >
+                    All Employees ({employees.length})
+                </button>
+                <button 
+                    onClick={() => setCategoryFilter('staff')}
+                    className={`px-4 py-2 text-xs font-bold uppercase rounded-sm border transition-all ${categoryFilter === 'staff' ? 'bg-amber-500 border-amber-500 text-white shadow-xs' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
+                >
+                    Staff Directory ({employees.filter(isStaffEmployee).length})
+                </button>
+                <button 
+                    onClick={() => setCategoryFilter('security')}
+                    className={`px-4 py-2 text-xs font-bold uppercase rounded-sm border transition-all ${categoryFilter === 'security' ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
+                >
+                    Security Directory ({employees.filter(emp => !isStaffEmployee(emp)).length})
+                </button>
+            </div>
+
             <div className="overflow-x-auto border border-stone-200 rounded-sm">
                 <table className="w-full text-xs text-left text-stone-800 min-w-[700px]">
                     <thead className="text-[10px] text-stone-600 uppercase bg-stone-50 border-b border-stone-200">
@@ -217,7 +262,7 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-200">
-                        {employees.map(emp => {
+                        {filteredEmployees.map(emp => {
                             const currentShift = getEmployeeShift(emp.id);
                             const isEditing = editingId === emp.id;
 

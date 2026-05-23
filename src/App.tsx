@@ -49,13 +49,33 @@ interface Employee {
   phoneNumber: string;
 }
 
+export const STAFF_IDS = [
+  '16153', '15439', '16325', '15524', '16135', '16117', '15525', '15641', '16254', '15608', '16279', 
+  '15590', '15832', '16187', '15548', '16110', '16004', '16114', '16270', '16099', '16193', '16009', '15973', '16156'
+];
+
+export const isStaffEmployee = (emp: any) => {
+  const idValue = String(emp.id).trim();
+  if (STAFF_IDS.includes(idValue)) return true;
+  const cat = (emp.category || '').toLowerCase().trim();
+  if (cat.includes('staff')) return true;
+  if (cat.includes('security') || cat.includes('guard')) return false;
+  const desig = (emp.designation || '').toLowerCase().trim();
+  if (desig.includes('security') || desig.includes('guard') || desig.includes('ansar')) return false;
+  return true;
+};
+
+export const isSecurityEmployee = (emp: any) => {
+  return !isStaffEmployee(emp);
+};
+
 export default function App() {
   const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
   const [activeSection, setActiveSection] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
   const [showProgress, setShowProgress] = useState(false);
-  const [showList, setShowList] = useState<'present' | 'absent' | null>(null);
+  const [showList, setShowList] = useState<'present' | 'absent' | 'present-staff' | 'absent-staff' | 'present-security' | 'absent-security' | null>(null);
 
   const fetchData = async () => {
     const conn = await checkConnection();
@@ -188,20 +208,78 @@ export default function App() {
       setUploadProgress(0);
       Papa.parse(file, {
         header: true,
-        skipEmptyLines: true,
+        skipEmptyLines: "greedy",
         complete: async (results) => {
-          const rawData = results.data as any[];
-          console.log('Upload data:', rawData);
-          if (rawData.length === 0) {
+          const parsedLines = results.data as any[];
+          console.log('Raw Papa.parse results:', parsedLines);
+          if (!parsedLines || parsedLines.length === 0) {
             setUploading(false);
             return;
           }
           
-          // First, get all employee IDs for validation
+          // Clean BOM/spaces from keys and values for bulletproof parsing
+          const rawData = parsedLines.map(row => {
+              const cleanedRow: any = {};
+              for (const k of Object.keys(row)) {
+                  const cleanedKey = k.replace(/^\uFEFF/, '').trim();
+                  cleanedRow[cleanedKey] = row[k] !== undefined && row[k] !== null ? String(row[k]).trim() : '';
+              }
+              return cleanedRow;
+          }).filter(row => {
+              const rawId = row['No.'] || row['No'] || row['ID'] || row['id'] || row['Employee ID'] || row['EmployeeID'] || row.no;
+              return !!(rawId && String(rawId).trim());
+          });
+
+          if (rawData.length === 0) {
+            alert('No valid rows found in the uploaded file. Please confirm the file has a "No." or "No" or "Employee ID" column.');
+            setUploading(false);
+            return;
+          }
+          
+          // First, get all current employee IDs from the database
           const { data: allEmps } = await supabase.from('employees').select('id');
-          // Store trimmed IDs
+          // Store trimmed IDs in a Set
           const empIdSet = new Set(allEmps?.map(e => String(e.id).trim()) || []);
-          console.log('Valid employee IDs:', Array.from(empIdSet));
+          console.log('Valid employee IDs in DB:', Array.from(empIdSet));
+
+          // Auto-registration module: identify missing employees and register them on the fly!
+          const missingEmployeesToRegister = new Map<string, any>();
+          for (const rec of rawData) {
+              const rawId = rec['No.'] || rec['No'] || rec['ID'] || rec['id'] || rec['Employee ID'] || rec['EmployeeID'] || rec.no;
+              const empId = rawId ? String(rawId).trim() : null;
+              if (empId && !empIdSet.has(empId) && !missingEmployeesToRegister.has(empId)) {
+                  const empName = (rec['Name'] || rec['name'] || `Employee ${empId}`).trim();
+                  const designation = (rec['ID Number'] || rec['Designation'] || rec['designation'] || '').trim();
+                  const category = (rec['Department'] || rec['department'] || rec['Category'] || rec['category'] || 'staff').trim();
+                  
+                  missingEmployeesToRegister.set(empId, {
+                      id: empId,
+                      name: empName,
+                      designation: designation,
+                      category: category,
+                      join_date: null,
+                      phone_number: '',
+                      education: 'Graduate|Day', // default to Day shift
+                      salary: '0'
+                  });
+              }
+          }
+
+          if (missingEmployeesToRegister.size > 0) {
+              const toInsert = Array.from(missingEmployeesToRegister.values());
+              console.log('On-the-fly registering missing employees:', toInsert);
+              const { error: insertError } = await supabase.from('employees').insert(toInsert);
+              if (insertError) {
+                  console.error('Failed to auto-register missing employees during upload:', insertError);
+              } else {
+                  console.log(`Successfully auto-registered ${toInsert.length} new employees!`);
+                  // Add registered employees to the validation set and cache their shift
+                  toInsert.forEach(emp => {
+                      empIdSet.add(emp.id);
+                      cacheDbShift(emp.id, 'Day');
+                  });
+              }
+          }
 
           // Group by empId and shift-aware date to find min/max times chronologically
           const groupedData: Record<string, { empId: string, date: string, punches: Array<{ time: Date, timeStr: string }>, idKey?: string, locationId?: string }> = {};
@@ -210,8 +288,7 @@ export default function App() {
 
           for (let i = 0; i < rawData.length; i++) {
              const rec = rawData[i];
-             // Trim IDs and handle all common column variations
-             const rawId = rec['No.'] || rec['No'] || rec['ID'] || rec['id'] || rec['Employee ID'] || rec['EmployeeID'] || rec.no || rec.ID || rec.id;
+             const rawId = rec['No.'] || rec['No'] || rec['ID'] || rec['id'] || rec['Employee ID'] || rec['EmployeeID'] || rec.no;
              const empId = rawId ? String(rawId).trim() : null;
              
              // Support combined DateTime or separate Date/Time columns
@@ -252,7 +329,7 @@ export default function App() {
              } else if (empId && !empIdSet.has(empId)) {
                 skippedCount++;
                 uniqueSkippedIds.add(empId);
-                console.warn(`Employee ID ${empId} not found in employees table. Skipping record.`);
+                console.warn(`Employee ID ${empId} not found in validation. Skipping record.`);
              }
 
              if (i % Math.max(1, Math.floor(rawData.length / 10)) === 0) {
@@ -567,55 +644,142 @@ export default function App() {
 
         {dbStatus === 'connected' && (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-              {/* Card 1: Employees & Present */}
-              <div className="bg-white border border-stone-200 shadow-sm rounded-sm flex overflow-hidden">
-                <div className="flex-1 p-4 md:p-6 flex flex-col gap-1">
-                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-stone-400 tracking-widest leading-tight">Total Employees</div>
-                  <div className="text-xl md:text-3xl font-serif italic text-stone-900 leading-none">{employees.length}</div>
-                </div>
-                <div className="w-px bg-stone-100 my-4"></div>
-                <button 
-                  onClick={() => setShowList('present')}
-                  className="flex-1 p-4 md:p-6 flex flex-col gap-1 text-right hover:bg-green-50 transition-colors group cursor-pointer"
-                >
-                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-green-600 tracking-widest leading-tight group-hover:underline">Present Today</div>
-                  <div className="text-xl md:text-3xl font-serif italic text-green-700 leading-none">
-                    {(() => {
-                      const presentCount = employees.filter(emp => {
-                        const shift = getEmployeeShift(emp.id);
-                        const targetDate = getTodayShiftDate(shift);
-                        return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                      }).length;
-                      return presentCount;
-                    })()}
+            {/* Real-time Category metrics: Staff & Security */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+              {/* Card 1: Staff Force */}
+              <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
+                <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
+                      Staff (স্টাফ)
+                    </h3>
                   </div>
-                </button>
+                  <span className="text-[9px] bg-amber-50 border border-amber-200/50 text-amber-800 px-1.5 py-0.5 rounded-sm font-bold">
+                    OFFICE / ADMIN
+                  </span>
+                </div>
+                
+                <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
+                  <div className="flex flex-col">
+                    <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
+                    <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
+                      {employees.filter(isStaffEmployee).length}
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => setShowList('present-staff')}
+                    className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
+                  >
+                    <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
+                    <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
+                      {(() => {
+                        return employees.filter(isStaffEmployee).filter(emp => {
+                          const shift = getEmployeeShift(emp.id);
+                          const targetDate = getTodayShiftDate(shift);
+                          return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                        }).length;
+                      })()}
+                    </span>
+                  </button>
+                  <button 
+                    onClick={() => setShowList('absent-staff')}
+                    className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
+                  >
+                    <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
+                    <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
+                      {(() => {
+                        const staffList = employees.filter(isStaffEmployee);
+                        const presentCount = staffList.filter(emp => {
+                          const shift = getEmployeeShift(emp.id);
+                          const targetDate = getTodayShiftDate(shift);
+                          return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                        }).length;
+                        return Math.max(0, staffList.length - presentCount);
+                      })()}
+                    </span>
+                  </button>
+                </div>
               </div>
 
-              {/* Card 2: Absent & Date */}
-              <div className="bg-white border border-stone-200 shadow-sm rounded-sm flex overflow-hidden">
-                <button 
-                  onClick={() => setShowList('absent')}
-                  className="flex-1 p-4 md:p-6 flex flex-col gap-1 hover:bg-red-50 transition-colors group cursor-pointer"
-                >
-                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-red-500 tracking-widest leading-tight group-hover:underline">Absent Today</div>
-                  <div className="text-xl md:text-3xl font-serif italic text-red-600 leading-none">
-                    {(() => {
-                      const presentCount = employees.filter(emp => {
-                        const shift = getEmployeeShift(emp.id);
-                        const targetDate = getTodayShiftDate(shift);
-                        return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                      }).length;
-                      return employees.length - presentCount;
-                    })()}
+              {/* Card 2: Security Force */}
+              <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
+                <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
+                    <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
+                      Security (নিরাপত্তা)
+                    </h3>
                   </div>
-                </button>
-                <div className="w-px bg-stone-100 my-4"></div>
-                <div className="flex-1 p-4 md:p-6 flex flex-col gap-1 text-right">
-                  <div className="text-[9px] md:text-[10px] uppercase font-bold text-stone-500 tracking-widest leading-tight">System Date</div>
-                  <div className="text-xs md:text-sm font-bold text-stone-800 leading-none uppercase">{formatSystemDate(getTodayShiftDate())}</div>
+                  <span className="text-[9px] bg-indigo-50 border border-indigo-200/50 text-indigo-800 px-1.5 py-0.5 rounded-sm font-bold">
+                    GUARD FORCE
+                  </span>
                 </div>
+                
+                <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
+                  <div className="flex flex-col">
+                    <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
+                    <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
+                      {employees.filter(isSecurityEmployee).length}
+                    </span>
+                  </div>
+                  <button 
+                    onClick={() => setShowList('present-security')}
+                    className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
+                  >
+                    <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
+                    <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
+                      {(() => {
+                        return employees.filter(isSecurityEmployee).filter(emp => {
+                          const shift = getEmployeeShift(emp.id);
+                          const targetDate = getTodayShiftDate(shift);
+                          return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                        }).length;
+                      })()}
+                    </span>
+                  </button>
+                  <button 
+                    onClick={() => setShowList('absent-security')}
+                    className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
+                  >
+                    <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
+                    <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
+                      {(() => {
+                        const securityList = employees.filter(isSecurityEmployee);
+                        const presentCount = securityList.filter(emp => {
+                          const shift = getEmployeeShift(emp.id);
+                          const targetDate = getTodayShiftDate(shift);
+                          return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                        }).length;
+                        return Math.max(0, securityList.length - presentCount);
+                      })()}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Card 3: Date & System Sync Status */}
+              <div className="bg-stone-900 text-stone-100 rounded-sm p-5 flex flex-col justify-between border border-stone-950">
+                <div className="flex justify-between items-center pb-2.5 border-b border-stone-800">
+                  <div className="flex items-center gap-1.5 text-amber-500 font-bold uppercase text-[9px] tracking-wider leading-none">
+                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping shrink-0" />
+                    Live System Date
+                  </div>
+                  <span className="text-[8px] font-mono bg-stone-800 text-stone-400 border border-stone-700 px-1.5 py-0.5 rounded uppercase font-bold">
+                    ACTIVE CONTROL
+                  </span>
+                </div>
+                
+                <div className="flex flex-col mt-2">
+                  <div className="text-[9px] uppercase font-bold text-stone-450 tracking-wider">Date Tracked</div>
+                  <div className="text-sm md:text-md font-bold text-white leading-tight mt-1">
+                    {formatSystemDate(getTodayShiftDate())}
+                  </div>
+                </div>
+                
+                <p className="text-[8.5px] text-stone-500 mt-2 font-mono leading-relaxed">
+                  Day: 08:00 AM - 06:00 AM • Night: 08:00 PM - 08:00 AM
+                </p>
               </div>
             </div>
 
@@ -625,7 +789,11 @@ export default function App() {
                 <div className="bg-white w-full max-w-md rounded-sm shadow-xl flex flex-col max-h-[80vh]">
                   <div className="p-4 border-b flex justify-between items-center bg-stone-50">
                     <h3 className="font-serif italic text-stone-900 text-lg">
-                      {showList === 'present' ? 'Present Employees Today' : 'Absent Employees Today'}
+                      {showList === 'present-staff' ? 'Present Staff Today (স্টাফ উপস্থিত)' :
+                       showList === 'absent-staff' ? 'Absent Staff Today (স্টাফ অনুপস্থিত)' :
+                       showList === 'present-security' ? 'Present Security Today (সিকিউরিটি উপস্থিত)' :
+                       showList === 'absent-security' ? 'Absent Security Today (সিকিউরিটি অনুপস্থিত)' :
+                       showList === 'present' ? 'Present Employees Today' : 'Absent Employees Today'}
                     </h3>
                     <button onClick={() => setShowList(null)} className="p-2 hover:bg-stone-200 rounded-full transition-colors">
                       <X size={20} />
@@ -639,9 +807,14 @@ export default function App() {
                         return attendance.some(a => a.no === empId && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
                       };
                       
-                      const list = showList === 'present' 
-                        ? employees.filter(e => isEmpPresent(e.id))
-                        : employees.filter(e => !isEmpPresent(e.id));
+                      const list = (() => {
+                        if (showList === 'present-staff') return employees.filter(isStaffEmployee).filter(e => isEmpPresent(e.id));
+                        if (showList === 'absent-staff') return employees.filter(isStaffEmployee).filter(e => !isEmpPresent(e.id));
+                        if (showList === 'present-security') return employees.filter(isSecurityEmployee).filter(e => isEmpPresent(e.id));
+                        if (showList === 'absent-security') return employees.filter(isSecurityEmployee).filter(e => !isEmpPresent(e.id));
+                        if (showList === 'present') return employees.filter(e => isEmpPresent(e.id));
+                        return employees.filter(e => !isEmpPresent(e.id));
+                      })();
 
                       if (list.length === 0) {
                         return <div className="p-8 text-center text-stone-400 italic">No records found.</div>;
@@ -666,7 +839,7 @@ export default function App() {
                                   </div>
                                 </div>
                                 <div className="text-[10px] text-stone-400 font-mono">
-                                  {showList === 'present' ? (
+                                  {isEmpPresent(emp.id) ? (
                                     attendance.find(a => a.dateISO === targetDate && a.no === emp.id)?.sysInTime || 
                                     attendance.find(a => a.dateISO === targetDate && a.no === emp.id)?.manualInTime || '-'
                                   ) : (

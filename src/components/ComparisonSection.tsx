@@ -175,8 +175,82 @@ export default function ComparisonSection({ employees, attendance, locations = [
         return 100; // Low-level staff
     };
 
-    // Filter and Sort employees by designation hierarchy
-    const filteredEmployees = employees.filter(emp => {
+    // The explicit 24-person sequence with designated Category mapping (SR.STAFF and JR.STAFF) requested by the user
+    const TARGET_PEOPLE: { id: string, name: string, category: 'SR.STAFF' | 'JR.STAFF' }[] = [
+        { id: '16153', name: 'MD. GHULAM KEBRIA', category: 'SR.STAFF' },
+        { id: '15439', name: 'MD.ASHRAF ALI', category: 'SR.STAFF' },
+        { id: '16325', name: 'MD. ASADUZZAMAN', category: 'SR.STAFF' },
+        { id: '15524', name: 'UJJAL CHANDRA DEY', category: 'SR.STAFF' },
+        { id: '16135', name: 'REZA-E-MOSTOFA', category: 'SR.STAFF' },
+        { id: '16117', name: 'MD. FARHAD SIKDER', category: 'SR.STAFF' },
+        { id: '15525', name: 'MD. KAMRUZZAMAN', category: 'SR.STAFF' },
+        { id: '15641', name: 'JUBAIR BIN AHMED', category: 'SR.STAFF' },
+        { id: '16254', name: 'MD. IMTIAZ FARUK RAFID', category: 'SR.STAFF' },
+        { id: '15608', name: 'ASHRAFUL ALAM', category: 'SR.STAFF' },
+        { id: '16279', name: 'YASIN ARAFAT JOY', category: 'SR.STAFF' },
+        
+        { id: '15590', name: 'ANUDHUTI DAM', category: 'JR.STAFF' },
+        { id: '15832', name: 'HARUN-OR RASHID', category: 'JR.STAFF' },
+        { id: '16187', name: 'MD. AL AMIN', category: 'JR.STAFF' },
+        { id: '15548', name: 'MD. MOTTAKIN ISLAM', category: 'JR.STAFF' },
+        { id: '16110', name: 'SHUVA SHARMA', category: 'JR.STAFF' },
+        { id: '16004', name: 'MD. AZIZUR RAHMAN', category: 'JR.STAFF' },
+        { id: '16114', name: 'MD. ALAMGIR RAHMAN', category: 'JR.STAFF' },
+        { id: '16270', name: 'MOHAMMAD AL-AMIN', category: 'JR.STAFF' },
+        { id: '16099', name: 'ALIN AHMMED', category: 'JR.STAFF' },
+        { id: '16193', name: 'MD. NAJIM', category: 'JR.STAFF' },
+        { id: '16009', name: 'MD. RIPON ISLAM', category: 'JR.STAFF' },
+        { id: '15973', name: 'ZIA UDDIN', category: 'JR.STAFF' },
+        { id: '16156', name: 'MD. SAMSUL ALAM', category: 'JR.STAFF' }
+    ];
+
+    // Build the executive list corresponding exactly to the 24 requested staff sequence
+    const mappedEmployees = TARGET_PEOPLE.map(target => {
+        const dbEmp = employees.find(e => String(e.id).trim() === target.id);
+        if (dbEmp) {
+            return {
+                ...dbEmp,
+                category: target.category // Override category with either SR.STAFF or JR.STAFF
+            };
+        } else {
+            // High-fidelity fallback stubs if some employees have not been fully initialized in the source DB yet
+            return {
+                id: target.id,
+                name: target.name,
+                designation: target.id === '16153' ? 'Assistant General Manager' :
+                             target.id === '15439' ? 'Sr. Project Engineer' :
+                             target.id === '16325' ? 'Deputy Manager (Store)' :
+                             target.id === '15524' ? 'Sr. Site Engineer' :
+                             target.id === '16135' ? 'Site Engineer' :
+                             target.id === '16117' ? 'Officer Accounts' :
+                             target.id === '15525' ? 'Site Engineer' :
+                             target.id === '15641' ? 'Accounts & Store' :
+                             target.id === '16254' ? 'Site Engineer' :
+                             target.id === '15608' ? 'Engineer-MEP' :
+                             target.id === '16279' ? 'Asst. Engineer' :
+                             target.id === '15590' ? 'Sr. Executive - Admin' :
+                             target.id === '15832' ? 'Project Accountant' :
+                             target.id === '16187' ? 'Fire & Safety Officer' :
+                             target.id === '15548' ? 'Sr. Executive - Admin' :
+                             target.id === '16110' ? 'Supervisor-Civil' :
+                             target.id === '16004' ? 'Electrical Officer' :
+                             target.id === '16114' ? 'Electrical Officer' :
+                             target.id === '16270' ? 'Welder' :
+                             target.id === '16099' ? 'Plant Operator' :
+                             target.id === '16193' ? 'Pump Operator' :
+                             target.id === '16009' ? 'Asst. Site Supervisor' :
+                             target.id === '15973' ? 'Backhoe - Driver' :
+                             target.id === '16156' ? 'Office Asst.' : '-',
+                education: 'Graduate|Day',
+                category: target.category,
+                salary: '-',
+                joinDate: '',
+                phoneNumber: ''
+            };
+        }
+    });
+
+    const sortedEmployees = mappedEmployees.filter(emp => {
         const term = searchTerm.toLowerCase();
         return (
             emp.id.toLowerCase().includes(term) ||
@@ -184,14 +258,6 @@ export default function ComparisonSection({ employees, attendance, locations = [
             (emp.designation || '').toLowerCase().includes(term) ||
             (emp.category || '').toLowerCase().includes(term)
         );
-    });
-
-    const sortedEmployees = [...filteredEmployees].sort((a, b) => {
-        const rankA = rankDesignation(a.designation);
-        const rankB = rankDesignation(b.designation);
-        if (rankA !== rankB) return rankA - rankB;
-        // Fallback to ID for stable sorting
-        return a.id.localeCompare(b.id);
     });
 
     // Sub-helpers for exact design display:
@@ -363,14 +429,14 @@ export default function ComparisonSection({ employees, attendance, locations = [
         sortedEmployees.forEach((emp, i) => {
             if (i === 11) {
                 rows.push([{
-                    content: 'Other Office Staff & Support',
+                    content: 'JR.STAFF (Junior Office Staff & Support) / জুনিয়র স্টাফ',
                     colSpan: 10 + datesInRange.length * 3,
                     styles: {
                         halign: 'left',
                         fontStyle: 'bold',
                         fillColor: [245, 245, 244],
                         textColor: [0, 0, 0], // Absolute black
-                        fontSize: 6,
+                        fontSize: 6.2,
                         cellPadding: 1.5
                     }
                 }]);
@@ -744,7 +810,7 @@ export default function ComparisonSection({ employees, attendance, locations = [
                                             >
                                                 <div className="flex items-center gap-2">
                                                     <span className="w-2.5 h-2.5 rounded-full bg-stone-400"></span>
-                                                    Other Office Staff & Support / অন্যান্য অফিস স্টাফ ও সহযোগী
+                                                    JR.STAFF (Junior Office Staff & Support) / জুনিয়র স্টাফ
                                                 </div>
                                             </td>
                                         </tr>
