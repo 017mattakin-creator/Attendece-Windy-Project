@@ -291,11 +291,13 @@ function EditableRow({ item, date, locations, onSave, viewMode }: { item: any, d
     const [inTime, setInTime] = useState(item.record.manualInTime || item.record.sysInTime || '');
     const [outTime, setOutTime] = useState(item.record.manualOutTime || item.record.sysOutTime || '');
     const [locationId, setLocationId] = useState(item.record.locationId || '');
+    const [lateRemark, setLateRemark] = useState((item.record as any).late_remark || '');
 
     useEffect(() => {
         setInTime(item.record.manualInTime || item.record.sysInTime || '');
         setOutTime(item.record.manualOutTime || item.record.sysOutTime || '');
         setLocationId(item.record.locationId || '');
+        setLateRemark((item.record as any).late_remark || '');
     }, [item.record]);
 
     return (
@@ -345,15 +347,25 @@ function EditableRow({ item, date, locations, onSave, viewMode }: { item: any, d
                 </select>
             </td>
             <td className="px-3 py-3">
-                <div className="max-w-[120px]">
-                    {(item.record as any).late_remark ? (
-                        <span className="text-[10px] text-red-600 font-bold leading-tight line-clamp-2 italic">
-                            {(item.record as any).late_remark}
-                        </span>
-                    ) : (
-                        <span className="text-stone-300 italic text-[9px]">-</span>
-                    )}
-                </div>
+                {viewMode === 'admin' ? (
+                    <input 
+                        type="text" 
+                        placeholder="মন্তব্য লিখুন..." 
+                        value={lateRemark} 
+                        onChange={e => setLateRemark(e.target.value)} 
+                        className="border border-stone-200 rounded px-2 py-1.5 w-36 text-xs focus:ring-1 focus:ring-stone-400 outline-none transition-all bg-white font-medium text-stone-800"
+                    />
+                ) : (
+                    <div className="max-w-[120px]">
+                        {lateRemark ? (
+                            <span className="text-[10px] text-red-600 font-bold leading-tight line-clamp-2 italic">
+                                {lateRemark}
+                            </span>
+                        ) : (
+                            <span className="text-stone-300 italic text-[9px]">-</span>
+                        )}
+                    </div>
+                )}
             </td>
             <td className="px-3 py-3">
                 <div className="max-w-[150px]">
@@ -423,7 +435,7 @@ function EditableRow({ item, date, locations, onSave, viewMode }: { item: any, d
             <td className="px-3 py-3">
                 {viewMode === 'admin' ? (
                   <button 
-                      onClick={() => onSave({ empId: item.emp.id, date, inTime, outTime, locationId })} 
+                      onClick={() => onSave({ empId: item.emp.id, date, inTime, outTime, locationId, lateRemark })} 
                       className="bg-stone-800 text-white hover:bg-stone-900 px-3 py-1.5 rounded text-[10px] uppercase font-bold tracking-wider transition-colors"
                   >
                       Save

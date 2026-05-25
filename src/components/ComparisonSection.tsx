@@ -50,34 +50,73 @@ const parseTimeToMinutes = (timeStr: string): number | null => {
     return null;
 };
 
-const getEmployeeRemarksForDate = (empId: string, dateISO: string, attendanceList: any[], locationList: any[]) => {
-    if (!dateISO) return { text: '', color: '', bg: '' };
+const getEmployeeRemarksForDate = (empId: string, dates: string | string[], attendanceList: any[], locationList: any[]) => {
+    const datesArr = Array.isArray(dates) ? dates : [dates];
+    const validDates = datesArr.filter(Boolean);
+    if (validDates.length === 0) return { text: '', color: '', bg: '' };
     
-    const rec = attendanceList.find((a: any) => String(a.no).trim() === String(empId).trim() && a.dateISO === dateISO);
-    const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(empId));
-    const statusValue = rec ? rec.status : (isFuture ? '-' : 'Absent');
+    const customRemarks: string[] = [];
+    let isAnyLate = false;
     
-    if (statusValue === 'Present' || statusValue === 'Manual') {
-        const originalIn = rec ? (rec.manualInTime || rec.sysInTime || '') : '';
-        const inMinutes = parseTimeToMinutes(originalIn);
-        
-        if (inMinutes !== null) {
-            const locId = rec ? rec.locationId : '';
-            const locName = locId ? (locationList.find(l => l.id === locId)?.name || locId) : '';
-            const isETP = locName.toLowerCase().includes('etp');
-            
-            // ETP cutoff: 08:10 AM => 490 mins. Other projects: 09:15 AM => 555 mins.
-            const limitMinutes = isETP ? (8 * 60 + 10) : (9 * 60 + 15);
-
-            if (inMinutes > limitMinutes) {
-                const customRemark = rec?.late_remark?.trim();
-                return { 
-                    text: customRemark || 'late', 
-                    color: 'text-red-600', 
-                    bg: '' 
-                };
+    const specialLateIds = ['16153', '15439', '16325', '16117', '15641'];
+    const cleanId = String(empId).trim();
+    const isSpecial = specialLateIds.includes(cleanId);
+    
+    // 09:10 AM is 9 * 60 + 10 = 550 minutes. Others all 08:10 AM is 8 * 60 + 10 = 490 minutes.
+    const limitMinutes = isSpecial ? (9 * 60 + 10) : (8 * 60 + 10);
+    const empShift = getEmployeeShift(empId);
+    
+    // 1. Collect custom remarks from all selected dates so we don't lose manually entered remarks
+    for (const d of validDates) {
+        const rec = attendanceList.find((a: any) => String(a.no).trim() === String(empId).trim() && a.dateISO === d);
+        if (rec) {
+            const customRemark = rec.late_remark?.trim();
+            if (customRemark) {
+                customRemarks.push(customRemark);
             }
         }
+    }
+
+    // 2. ONLY calculate automatic "Late" status based on the LATEST/LAST selected date of the range
+    const lastDate = validDates[validDates.length - 1];
+    if (lastDate) {
+        const rec = attendanceList.find((a: any) => String(a.no).trim() === String(empId).trim() && a.dateISO === lastDate);
+        if (rec) {
+            const statusValue = rec.status || '';
+            const customRemark = rec.late_remark?.trim();
+            // Only auto-mark if the employee was Present/Manual and has no manual remark on the last date
+            if (!customRemark && (statusValue === 'Present' || statusValue === 'Manual')) {
+                const originalIn = rec.manualInTime || rec.sysInTime || '';
+                const inMinutes = parseTimeToMinutes(originalIn);
+                if (inMinutes !== null) {
+                    if (empShift !== 'Night') {
+                        // Only Day Shift gets checked for late, and only for morning clock-ins (before 12:00 PM)
+                        if (inMinutes < 12 * 60) {
+                            if (inMinutes > limitMinutes) {
+                                isAnyLate = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (customRemarks.length > 0) {
+        const uniqueRemarks = Array.from(new Set(customRemarks));
+        return {
+            text: uniqueRemarks.join(', '),
+            color: 'text-red-600 font-bold',
+            bg: 'bg-red-50'
+        };
+    }
+
+    if (isAnyLate) {
+        return {
+            text: 'Late',
+            color: 'text-red-600 font-bold',
+            bg: ''
+        };
     }
     
     return { text: '', color: '', bg: '' };
@@ -87,9 +126,10 @@ interface Props {
     employees: any[];
     attendance: any[];
     locations?: any[];
+    onEmployeeClick?: (empId: string) => void;
 }
 
-export default function ComparisonSection({ employees, attendance, locations = [] }: Props) {
+export default function ComparisonSection({ employees, attendance, locations = [], onEmployeeClick }: Props) {
     const [searchTerm, setSearchTerm] = useState('');
     
     // Find custom dynamic default range based on latest available data to prevent blank starts
@@ -360,8 +400,7 @@ export default function ComparisonSection({ employees, attendance, locations = [
                 rowData.push(outTime);
             });
 
-            const lastDate = datesInRange[datesInRange.length - 1] || '';
-            const remarksObj = getEmployeeRemarksForDate(emp.id, lastDate, attendance, locations);
+            const remarksObj = getEmployeeRemarksForDate(emp.id, datesInRange, attendance, locations);
             rowData.push(remarksObj.text);
 
             sheetData.push(rowData);
@@ -488,8 +527,7 @@ export default function ComparisonSection({ employees, attendance, locations = [
                 rowData.push(outTime);
             });
 
-            const lastDate = datesInRange[datesInRange.length - 1] || '';
-            const remarksObj = getEmployeeRemarksForDate(emp.id, lastDate, attendance, locations);
+            const remarksObj = getEmployeeRemarksForDate(emp.id, datesInRange, attendance, locations);
             rowData.push(remarksObj.text);
 
             rows.push(rowData);
@@ -824,12 +862,20 @@ export default function ComparisonSection({ employees, attendance, locations = [
                                     </td>
                                     
                                     {/* Emp ID (Center aligned) */}
-                                    <td className={`px-1.5 py-2.5 border text-center font-mono font-semibold ${gridColorClass}`}>
+                                    <td 
+                                        onClick={() => onEmployeeClick?.(emp.id)}
+                                        className={`px-1.5 py-2.5 border text-center font-mono font-semibold cursor-pointer hover:underline hover:text-amber-600 transition-all ${gridColorClass}`}
+                                        title="Click to open Manual Entry / হাজিরা ফরম খুলতে ক্লিক করুন"
+                                    >
                                         {emp.id}
                                     </td>
                                     
                                     {/* Name (Left aligned) */}
-                                    <td className={`px-2 py-2.5 border text-left text-stone-900 uppercase tracking-tight ${gridColorClass}`}>
+                                    <td 
+                                        onClick={() => onEmployeeClick?.(emp.id)}
+                                        className={`px-2 py-2.5 border text-left text-stone-900 uppercase tracking-tight cursor-pointer hover:underline hover:text-amber-600 transition-all ${gridColorClass}`}
+                                        title="Click to open Manual Entry / হাজিরা ফরম খুলতে ক্লিক করুন"
+                                    >
                                         {emp.name}
                                     </td>
                                     
@@ -894,10 +940,9 @@ export default function ComparisonSection({ employees, attendance, locations = [
                                         );
                                     })}
 
-                                    {/* Remarks Cell (Calculated from the last date in selected range) at the absolute end */}
+                                    {/* Remarks Cell (Calculated from all dates in selected range) at the absolute end */}
                                     {(() => {
-                                        const lastDate = datesInRange[datesInRange.length - 1] || '';
-                                        const remarks = getEmployeeRemarksForDate(emp.id, lastDate, attendance, locations);
+                                        const remarks = getEmployeeRemarksForDate(emp.id, datesInRange, attendance, locations);
                                         return (
                                             <td className={`px-2 py-2.5 border text-center font-semibold text-[11px] ${gridColorClass} ${remarks.color}`}>
                                                 {remarks.text}

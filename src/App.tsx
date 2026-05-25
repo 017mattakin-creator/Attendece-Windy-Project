@@ -181,6 +181,7 @@ export default function App() {
   const [locations, setLocations] = useState<{id: string, name: string}[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [preSelectedEmployeeId, setPreSelectedEmployeeId] = useState<string | null>(null);
 
 
   const handleAdminVerify = () => {
@@ -683,6 +684,149 @@ export default function App() {
     }
   };
 
+  const renderMetricsGrid = () => (
+    <div className="pt-4 border-t border-stone-200">
+      <h4 className="text-[10px] font-extrabold uppercase tracking-widest text-stone-400 mb-4 font-mono">Present Status Summary / বর্তমান পরিসংখ্যান</h4>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Card 1: Staff Force */}
+        <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
+          <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+              <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
+                Staff (স্টাফ)
+              </h3>
+            </div>
+            <span className="text-[9px] bg-amber-50 border border-amber-200/50 text-amber-800 px-1.5 py-0.5 rounded-sm font-bold">
+              OFFICE / ADMIN
+            </span>
+          </div>
+          
+          <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
+            <div className="flex flex-col">
+              <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
+              <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
+                {employees.filter(isStaffEmployee).length}
+              </span>
+            </div>
+            <button 
+              onClick={() => setShowList('present-staff')}
+              className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
+            >
+              <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
+              <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
+                {(() => {
+                  return employees.filter(isStaffEmployee).filter(emp => {
+                    const shift = getEmployeeShift(emp.id);
+                    const targetDate = getTodayShiftDate(shift);
+                    return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                  }).length;
+                })()}
+              </span>
+            </button>
+            <button 
+              onClick={() => setShowList('absent-staff')}
+              className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
+            >
+              <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
+              <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
+                {(() => {
+                  const staffList = employees.filter(isStaffEmployee);
+                  const presentCount = staffList.filter(emp => {
+                    const shift = getEmployeeShift(emp.id);
+                    const targetDate = getTodayShiftDate(shift);
+                    return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                  }).length;
+                  return Math.max(0, staffList.length - presentCount);
+                })()}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Card 2: Security Force */}
+        <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
+          <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
+              <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
+                Security (নিরাপত্তা)
+              </h3>
+            </div>
+            <span className="text-[9px] bg-indigo-50 border border-indigo-200/50 text-indigo-800 px-1.5 py-0.5 rounded-sm font-bold">
+              GUARD FORCE
+            </span>
+          </div>
+          
+          <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
+            <div className="flex flex-col">
+              <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
+              <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
+                {employees.filter(isSecurityEmployee).length}
+              </span>
+            </div>
+            <button 
+              onClick={() => setShowList('present-security')}
+              className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
+            >
+              <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
+              <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
+                {(() => {
+                  return employees.filter(isSecurityEmployee).filter(emp => {
+                    const shift = getEmployeeShift(emp.id);
+                    const targetDate = getTodayShiftDate(shift);
+                    return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                  }).length;
+                })()}
+              </span>
+            </button>
+            <button 
+              onClick={() => setShowList('absent-security')}
+              className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
+            >
+              <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
+              <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
+                {(() => {
+                  const securityList = employees.filter(isSecurityEmployee);
+                  const presentCount = securityList.filter(emp => {
+                    const shift = getEmployeeShift(emp.id);
+                    const targetDate = getTodayShiftDate(shift);
+                    return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
+                  }).length;
+                  return Math.max(0, securityList.length - presentCount);
+                })()}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Card 3: Date & System Sync Status */}
+        <div className="bg-stone-900 text-stone-100 rounded-sm p-5 flex flex-col justify-between border border-stone-950">
+          <div className="flex justify-between items-center pb-2.5 border-b border-stone-800">
+            <div className="flex items-center gap-1.5 text-amber-500 font-bold uppercase text-[9px] tracking-wider leading-none">
+              <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping shrink-0" />
+              Live System Date
+            </div>
+            <span className="text-[8px] font-mono bg-stone-800 text-stone-400 border border-stone-700 px-1.5 py-0.5 rounded uppercase font-bold">
+              ACTIVE CONTROL
+            </span>
+          </div>
+          
+          <div className="flex flex-col mt-2">
+            <div className="text-[9px] uppercase font-bold text-stone-450 tracking-wider">Date Tracked</div>
+            <div className="text-sm md:text-md font-bold text-white leading-tight mt-1">
+              {formatSystemDate(getTodayShiftDate())}
+            </div>
+          </div>
+          
+          <p className="text-[8.5px] text-stone-500 mt-2 font-mono leading-relaxed">
+            Day: 08:00 AM - 06:00 AM • Night: 08:00 PM - 08:00 AM
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
       <div className="flex bg-stone-100 min-h-screen relative overflow-x-hidden">
       <Sidebar 
@@ -797,10 +941,26 @@ export default function App() {
                           {list.map(emp => {
                             const shift = getEmployeeShift(emp.id);
                             const targetDate = getTodayShiftDate(shift);
+                            const isAdmin = viewMode === 'admin';
                             return (
-                              <div key={emp.id} className="p-3 flex justify-between items-center hover:bg-stone-50">
+                              <div 
+                                key={emp.id} 
+                                onClick={() => {
+                                  if (isAdmin) {
+                                    setPreSelectedEmployeeId(emp.id);
+                                    setActiveSection('dashboard');
+                                    setShowList(null);
+                                  }
+                                }}
+                                className={`p-3 flex justify-between items-center transition-all ${
+                                  isAdmin 
+                                    ? 'hover:bg-amber-50 cursor-pointer border-l-2 border-transparent hover:border-amber-500' 
+                                    : 'hover:bg-stone-50'
+                                }`}
+                                title={isAdmin ? "Click to open Manual Entry / হাজিরা ফরম খুলতে ক্লিক করুন" : undefined}
+                              >
                                 <div>
-                                  <div className="text-sm font-bold text-stone-800">{emp.name}</div>
+                                  <div className={`text-sm font-bold ${isAdmin ? 'text-stone-800 hover:text-amber-700' : 'text-stone-800'}`}>{emp.name}</div>
                                   <div className="text-[10px] text-stone-500 uppercase tracking-tighter flex items-center gap-1">
                                     <span>ID: {emp.id} • {emp.designation}</span>
                                     <span className={`px-1 rounded-[2px] leading-tight text-[8px] font-bold ${
@@ -810,12 +970,17 @@ export default function App() {
                                     </span>
                                   </div>
                                 </div>
-                                <div className="text-[10px] text-stone-400 font-mono">
-                                  {isEmpPresent(emp.id) ? (
-                                    attendance.find(a => a.dateISO === targetDate && a.no === emp.id)?.sysInTime || 
-                                    attendance.find(a => a.dateISO === targetDate && a.no === emp.id)?.manualInTime || '-'
-                                  ) : (
-                                    'OFFLINE'
+                                <div className="text-[10px] text-stone-400 font-mono text-right flex flex-col items-end">
+                                  <span>
+                                    {isEmpPresent(emp.id) ? (
+                                      attendance.find(a => a.dateISO === targetDate && a.no === emp.id)?.sysInTime || 
+                                      attendance.find(a => a.dateISO === targetDate && a.no === emp.id)?.manualInTime || '-'
+                                    ) : (
+                                      'OFFLINE'
+                                    )}
+                                  </span>
+                                  {isAdmin && (
+                                    <span className="text-[8px] text-amber-600 font-sans font-bold mt-0.5">EDIT / ইডিট</span>
                                   )}
                                 </div>
                               </div>
@@ -852,150 +1017,21 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Manual/Auto Attendance Entry Form is placed on the ABSOLUTE TOP of the dashboard page */}
-                <ManualEntrySection employees={employees} locations={locations} onRefresh={fetchData} viewMode={viewMode} />
+                {/* If ADMIN: Show Statistics & Metrics Dashboard at the absolute top */}
+                {viewMode === 'admin' && renderMetricsGrid()}
 
-                {/* Real-time Category metrics: Staff & Security (moved here so they don't block other tabs) */}
-                <div className="pt-4 border-t border-stone-200">
-                  <h4 className="text-[10px] font-extrabold uppercase tracking-widest text-stone-400 mb-4 font-mono">Present Status Summary / বর্তমান পরিসংখ্যান</h4>
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Card 1: Staff Force */}
-                    <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
-                      <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
-                          <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
-                            Staff (স্টাফ)
-                          </h3>
-                        </div>
-                        <span className="text-[9px] bg-amber-50 border border-amber-200/50 text-amber-800 px-1.5 py-0.5 rounded-sm font-bold">
-                          OFFICE / ADMIN
-                        </span>
-                      </div>
-                      
-                      <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
-                        <div className="flex flex-col">
-                          <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
-                          <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
-                            {employees.filter(isStaffEmployee).length}
-                          </span>
-                        </div>
-                        <button 
-                          onClick={() => setShowList('present-staff')}
-                          className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
-                        >
-                          <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
-                          <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
-                            {(() => {
-                              return employees.filter(isStaffEmployee).filter(emp => {
-                                const shift = getEmployeeShift(emp.id);
-                                const targetDate = getTodayShiftDate(shift);
-                                return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                              }).length;
-                            })()}
-                          </span>
-                        </button>
-                        <button 
-                          onClick={() => setShowList('absent-staff')}
-                          className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
-                        >
-                          <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
-                          <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
-                            {(() => {
-                              const staffList = employees.filter(isStaffEmployee);
-                              const presentCount = staffList.filter(emp => {
-                                const shift = getEmployeeShift(emp.id);
-                                const targetDate = getTodayShiftDate(shift);
-                                return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                              }).length;
-                              return Math.max(0, staffList.length - presentCount);
-                            })()}
-                          </span>
-                        </button>
-                      </div>
-                    </div>
+                {/* Manual/Auto Attendance Entry Form */}
+                <ManualEntrySection 
+                  employees={employees} 
+                  locations={locations} 
+                  onRefresh={fetchData} 
+                  viewMode={viewMode} 
+                  selectedEmployeeId={preSelectedEmployeeId}
+                  onClearPreSelected={() => setPreSelectedEmployeeId(null)}
+                />
 
-                    {/* Card 2: Security Force */}
-                    <div className="bg-white border border-stone-200 shadow-sm rounded-sm p-5 flex flex-col justify-between">
-                      <div className="flex justify-between items-center border-b border-stone-100 pb-2.5 mb-4">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
-                          <h3 className="font-serif italic text-stone-900 text-sm font-bold uppercase tracking-wider">
-                            Security (নিরাপত্তা)
-                          </h3>
-                        </div>
-                        <span className="text-[9px] bg-indigo-50 border border-indigo-200/50 text-indigo-800 px-1.5 py-0.5 rounded-sm font-bold">
-                          GUARD FORCE
-                        </span>
-                      </div>
-                      
-                      <div className="grid grid-cols-3 gap-2 text-center divide-x divide-stone-150">
-                        <div className="flex flex-col">
-                          <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
-                          <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
-                            {employees.filter(isSecurityEmployee).length}
-                          </span>
-                        </div>
-                        <button 
-                          onClick={() => setShowList('present-security')}
-                          className="flex flex-col hover:bg-green-50 rounded py-1 transition-colors group cursor-pointer"
-                        >
-                          <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
-                          <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
-                            {(() => {
-                              return employees.filter(isSecurityEmployee).filter(emp => {
-                                const shift = getEmployeeShift(emp.id);
-                                const targetDate = getTodayShiftDate(shift);
-                                return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                              }).length;
-                            })()}
-                          </span>
-                        </button>
-                        <button 
-                          onClick={() => setShowList('absent-security')}
-                          className="flex flex-col hover:bg-red-50 rounded py-1 transition-colors group cursor-pointer"
-                        >
-                          <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
-                          <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
-                            {(() => {
-                              const securityList = employees.filter(isSecurityEmployee);
-                              const presentCount = securityList.filter(emp => {
-                                const shift = getEmployeeShift(emp.id);
-                                const targetDate = getTodayShiftDate(shift);
-                                return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
-                              }).length;
-                              return Math.max(0, securityList.length - presentCount);
-                            })()}
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Card 3: Date & System Sync Status */}
-                    <div className="bg-stone-900 text-stone-100 rounded-sm p-5 flex flex-col justify-between border border-stone-950">
-                      <div className="flex justify-between items-center pb-2.5 border-b border-stone-800">
-                        <div className="flex items-center gap-1.5 text-amber-500 font-bold uppercase text-[9px] tracking-wider leading-none">
-                          <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-ping shrink-0" />
-                          Live System Date
-                        </div>
-                        <span className="text-[8px] font-mono bg-stone-800 text-stone-400 border border-stone-700 px-1.5 py-0.5 rounded uppercase font-bold">
-                          ACTIVE CONTROL
-                        </span>
-                      </div>
-                      
-                      <div className="flex flex-col mt-2">
-                        <div className="text-[9px] uppercase font-bold text-stone-450 tracking-wider">Date Tracked</div>
-                        <div className="text-sm md:text-md font-bold text-white leading-tight mt-1">
-                          {formatSystemDate(getTodayShiftDate())}
-                        </div>
-                      </div>
-                      
-                      <p className="text-[8.5px] text-stone-500 mt-2 font-mono leading-relaxed">
-                        Day: 08:00 AM - 06:00 AM • Night: 08:00 PM - 08:00 AM
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                {/* If USER/EMPLOYEE: Show Statistics & Metrics at the bottom */}
+                {viewMode !== 'admin' && renderMetricsGrid()}
 
                 {/* Dashboard bottom: Quick Actions & Maps */}
                 <div className="pt-4 border-t border-stone-200">
@@ -1034,6 +1070,7 @@ export default function App() {
                 live_location: existing?.live_location || null,
                 live_location_in: existing?.live_location_in || null,
                 live_location_out: existing?.live_location_out || null,
+                late_remark: r.lateRemark || null,
                 status: 'Manual' 
             }], { onConflict: 'employee_id,date_iso' });
             
@@ -1048,7 +1085,17 @@ export default function App() {
             }
         }} />}
         {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} progress={uploadProgress} />}
-        {activeSection === 'comparison' && viewMode === 'admin' && <ComparisonSection employees={employees} attendance={attendance} locations={locations} />}
+        {activeSection === 'comparison' && viewMode === 'admin' && (
+          <ComparisonSection 
+            employees={employees} 
+            attendance={attendance} 
+            locations={locations} 
+            onEmployeeClick={(empId) => {
+              setPreSelectedEmployeeId(empId);
+              setActiveSection('dashboard');
+            }}
+          />
+        )}
         {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
           </>

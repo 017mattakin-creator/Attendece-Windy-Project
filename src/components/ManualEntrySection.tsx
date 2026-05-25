@@ -21,9 +21,18 @@ interface Props {
   locations: {id: string, name: string}[];
   onRefresh: () => void;
   viewMode: 'admin' | 'user';
+  selectedEmployeeId?: string | null;
+  onClearPreSelected?: () => void;
 }
 
-export default function ManualEntrySection({ employees, locations, onRefresh, viewMode }: Props) {
+export default function ManualEntrySection({ 
+  employees, 
+  locations, 
+  onRefresh, 
+  viewMode,
+  selectedEmployeeId,
+  onClearPreSelected
+}: Props) {
   const [selectedEmp, setSelectedEmp] = useState<Employee | null>(() => {
     try {
       const saved = sessionStorage.getItem('attendance_selected_emp');
@@ -147,6 +156,18 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
 
   const prevEmpIdRef = React.useRef<string | null>(null);
 
+  // Listen to selectedEmployeeId prop changes (e.g. from Comparison section)
+  React.useEffect(() => {
+    if (selectedEmployeeId) {
+      const emp = employees.find(e => String(e.id).trim() === String(selectedEmployeeId).trim());
+      if (emp) {
+        setSelectedEmp(emp);
+        sessionStorage.setItem('attendance_selected_emp', JSON.stringify(emp));
+      }
+      onClearPreSelected?.();
+    }
+  }, [selectedEmployeeId, employees, onClearPreSelected]);
+
   // Update clock every second
   React.useEffect(() => {
     const timer = setInterval(() => {
@@ -227,6 +248,7 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
           setInTime('');
           setOutTime('');
           setLocation('');
+          setLateRemark('');
         }
       } catch (err) {
         console.error('Fetch existing catch:', err);
@@ -352,6 +374,8 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
   const handleSubmit = async () => {
     if (!selectedEmp || !date) return alert('Select employee and date');
     
+    const empShift = selectedEmp ? getEmployeeShift(selectedEmp.id) : 'Day';
+    
     let finalLocIn = liveLocIn;
     if (!finalLocIn && inTime && viewMode === 'user') {
       const attempts = locAttempts['in'];
@@ -367,14 +391,19 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
     }
     
     // STRICT REMARK VALIDATION
-    const empShift = selectedEmp ? getEmployeeShift(selectedEmp.id) : 'Day';
-    const [h, m] = inTime.split(':').map(Number);
-    const isLate = empShift === 'Night'
-      ? (h > 20 || (h === 20 && m > 15))
-      : (h > 9 || (h === 9 && m > 15));
-    if (isLate && !lateRemark.trim()) {
-      const lateTimeStr = empShift === 'Night' ? "রাত ০৮:১৫" : "সকাল ০৯:১৫";
-      return alert(`দুঃখিত! আপনি ${lateTimeStr} এর পরে এসেছেন। \n\nদেরি হওয়ার কারণ (Late Remark) অবশ্যই লিখতে হবে, তা না হলে এন্ট্রি সেভ হবে না।`);
+    if (inTime) {
+      const parts = inTime.split(':');
+      if (parts.length === 2) {
+        const h = Number(parts[0]);
+        const m = Number(parts[1]);
+        const isLate = empShift === 'Night'
+          ? (h > 20 || (h === 20 && m > 15))
+          : (h > 9 || (h === 9 && m > 15));
+        if (isLate && !lateRemark.trim()) {
+          const lateTimeStr = empShift === 'Night' ? "রাত ০৮:১৫" : "সকাল ০৯:১৫";
+          return alert(`দুঃখিত! আপনি ${lateTimeStr} এর পরে এসেছেন। \n\nদেরি হওয়ার কারণ (Comment/Late Remark) অবশ্যই লিখতে হবে, তা না হলে এন্ট্রি সেভ হবে না।`);
+        }
+      }
     }
 
     let finalLocOut = liveLocOut;
@@ -647,29 +676,21 @@ export default function ManualEntrySection({ employees, locations, onRefresh, vi
             </select>
           </div>
 
-          {/* Late Remark Field - Shows if clocking in after 09:15 AM */}
-          {(() => {
-            if (!inTime) return false;
-            const [hours, minutes] = inTime.split(':').map(Number);
-            const isLate = hours > 9 || (hours === 9 && minutes > 15);
-            return isLate;
-          })() && (
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="space-y-1 bg-amber-50 p-3 border border-amber-100 rounded-sm"
-            >
-              <label className="text-[10px] uppercase font-bold text-amber-700 flex items-center gap-1">
-                <AlertCircle className="w-3 h-3 text-amber-500" /> অফিসে পৌঁছাতে দেরি হওয়ার সুনির্দিষ্ট কারণ এখানে লিখুন
-              </label>
-              <textarea 
-                placeholder="অফিসে পৌঁছাতে দেরি হওয়ার সুনির্দিষ্ট কারণ এখানে লিখুন..."
-                className="w-full border border-amber-200 p-2 text-xs rounded-sm focus:border-amber-400 outline-none bg-white min-h-[70px]"
-                value={lateRemark}
-                onChange={e => setLateRemark(e.target.value)}
-              />
-            </motion.div>
-          )}
+          {/* Comment / Remarks Field - Always available for overtime / extra over duty / absence etc. */}
+          <div className="space-y-1 bg-amber-50/40 p-3 border border-amber-100 rounded-sm">
+            <label className="text-[10px] uppercase font-bold text-stone-700 flex items-center gap-1.5 font-sans leading-none">
+              <AlertCircle className="w-3.5 h-3.5 text-amber-500 animate-pulse" /> Comment / Remarks (মন্তব্য)
+            </label>
+            <p className="text-[9.5px] text-stone-500 leading-normal mb-1 bg-white/50 p-1 border border-stone-200/50 rounded-xs font-medium">
+              অফিসে পৌঁছাতে দেরি হওয়া, অতিরিক্ত অভার ডিউটি (Over Duty), অনুপস্থিতি বা অন্য কোনো প্রয়োজনীয় মন্তব্য এখানে লিখুন।
+            </p>
+            <textarea 
+              placeholder="অতিরিক্ত ডিউটি, দেরি হওয়া, অনুপস্থিতি বা অন্য কোনো মন্তব্য এখানে লিখুন..."
+              className="w-full border border-stone-200 p-2 text-xs rounded-sm focus:border-amber-400 focus:ring-1 focus:ring-amber-400 outline-none bg-white min-h-[70px]"
+              value={lateRemark}
+              onChange={e => setLateRemark(e.target.value)}
+            />
+          </div>
 
           <div className="pt-4 mt-auto">
             {/* Warning for Missing Location */}

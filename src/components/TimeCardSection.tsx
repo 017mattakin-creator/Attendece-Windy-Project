@@ -119,6 +119,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
             if (field === 'status') updatePayload.status = newValue;
             if (field === 'in') updatePayload.manual_in_time = newValue;
             if (field === 'out') updatePayload.manual_out_time = newValue;
+            if (field === 'remarks') updatePayload.late_remark = newValue;
 
             const { error } = await supabase.from('attendance').upsert([updatePayload], { onConflict: 'employee_id,date_iso' });
 
@@ -147,7 +148,8 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                 'Date': dateISO,
                 'In Time': record ? (record.manualInTime || record.sysInTime) : '-',
                 'Out Time': record ? (record.manualOutTime || record.sysOutTime) : '-',
-                'Status': status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present')))
+                'Status': status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present'))),
+                'Remarks / Comments': record?.late_remark || '-'
             };
             if (viewMode === 'admin') {
                 (base as any)['Live Location'] = record?.live_location || '-';
@@ -217,7 +219,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
         });
         
         // Attendance Details Table
-        const head = [['Date', 'In Time', 'Out Time', 'Status', ...(viewMode === 'admin' ? ['Live Loc'] : [])]];
+        const head = [['Date', 'In Time', 'Out Time', 'Status', 'Remarks / Comments', ...(viewMode === 'admin' ? ['Live Loc'] : [])]];
         const body = days.map(d => {
             const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             const record = empAttendance.find(a => a.dateISO === dateISO);
@@ -228,6 +230,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                 record ? (record.manualInTime || record.sysInTime) : '-',
                 record ? (record.manualOutTime || record.sysOutTime) : '-',
                 status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present'))),
+                record?.late_remark || '-',
                 ...(viewMode === 'admin' ? [record?.live_location || '-'] : [])
             ];
         });
@@ -359,6 +362,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                              <th className="px-3 py-3">Out Time</th>
                              {viewMode === 'admin' && <th className="px-3 py-3">Live Loc</th>}
                              <th className="px-3 py-3">Status</th>
+                             <th className="px-3 py-3">Remarks / Comments (মন্তব্য)</th>
                           </tr>
                        </thead>
                        <tbody className="divide-y divide-stone-100">
@@ -440,6 +444,21 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                                                   ) : (
                                                       <span className={`font-bold ${status.color}`}>
                                                           {status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present')))}
+                                                      </span>
+                                                  )}
+                                              </td>
+                                              <td className="px-3 py-3">
+                                                  {viewMode === 'admin' ? (
+                                                      <input 
+                                                          type="text"
+                                                          placeholder="মন্তব্য..."
+                                                          defaultValue={record?.late_remark || ''}
+                                                          onBlur={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'remarks', e.target.value)}
+                                                          className="w-36 text-xs border border-stone-200 rounded px-1.5 py-1 outline-none focus:ring-1 focus:ring-amber-400 font-medium text-stone-800"
+                                                      />
+                                                  ) : (
+                                                      <span className="italic text-stone-600 font-medium text-[11px] select-text">
+                                                          {record?.late_remark || <span className="text-stone-300">-</span>}
                                                       </span>
                                                   )}
                                               </td>
