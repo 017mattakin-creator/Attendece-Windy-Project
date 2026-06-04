@@ -1097,7 +1097,7 @@ export default function App() {
           />
         )}
         {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
-        {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
+        {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
           </>
         )}
       </main>

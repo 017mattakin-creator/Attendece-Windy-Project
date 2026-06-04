@@ -9,11 +9,12 @@ import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
 interface Props {
     employees: any[];
     attendance: any[];
+    locations: any[];
     onRefresh?: () => void;
     viewMode?: 'admin' | 'user';
 }
 
-export default function TimeCardSection({ employees, attendance, onRefresh, viewMode }: Props) {
+export default function TimeCardSection({ employees, attendance, locations, onRefresh, viewMode }: Props) {
     const [selectedEmpId, setSelectedEmpId] = useState('');
     const [month, setMonth] = useState(new Date().getMonth() + 1);
     const [year, setYear] = useState(new Date().getFullYear());
@@ -120,6 +121,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
             if (field === 'in') updatePayload.manual_in_time = newValue;
             if (field === 'out') updatePayload.manual_out_time = newValue;
             if (field === 'remarks') updatePayload.late_remark = newValue;
+            if (field === 'location') updatePayload.location_id = newValue || null;
 
             const { error } = await supabase.from('attendance').upsert([updatePayload], { onConflict: 'employee_id,date_iso' });
 
@@ -148,12 +150,10 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                 'Date': dateISO,
                 'In Time': record ? (record.manualInTime || record.sysInTime) : '-',
                 'Out Time': record ? (record.manualOutTime || record.sysOutTime) : '-',
+                'Project Location': record ? (locations.find(l => l.id === record.locationId)?.name || record.locationId || '-') : '-',
                 'Status': status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present'))),
                 'Remarks / Comments': record?.late_remark || '-'
             };
-            if (viewMode === 'admin') {
-                (base as any)['Live Location'] = record?.live_location || '-';
-            }
             return base;
         });
 
@@ -219,7 +219,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
         });
         
         // Attendance Details Table
-        const head = [['Date', 'In Time', 'Out Time', 'Status', 'Remarks / Comments', ...(viewMode === 'admin' ? ['Live Loc'] : [])]];
+        const head = [['Date', 'In Time', 'Out Time', 'Project Location', 'Status', 'Remarks / Comments']];
         const body = days.map(d => {
             const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             const record = empAttendance.find(a => a.dateISO === dateISO);
@@ -229,9 +229,9 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                 dateISO,
                 record ? (record.manualInTime || record.sysInTime) : '-',
                 record ? (record.manualOutTime || record.sysOutTime) : '-',
+                record ? (locations.find(l => l.id === record.locationId)?.name || record.locationId || '-') : '-',
                 status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present'))),
-                record?.late_remark || '-',
-                ...(viewMode === 'admin' ? [record?.live_location || '-'] : [])
+                record?.late_remark || '-'
             ];
         });
 
@@ -360,7 +360,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                              <th className="px-3 py-3">Date</th>
                              <th className="px-3 py-3">In Time</th>
                              <th className="px-3 py-3">Out Time</th>
-                             {viewMode === 'admin' && <th className="px-3 py-3">Live Loc</th>}
+                              <th className="px-3 py-3">Project Location</th>
                              <th className="px-3 py-3">Status</th>
                              <th className="px-3 py-3">Remarks / Comments (মন্তব্য)</th>
                           </tr>
@@ -399,8 +399,31 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                                                       record ? (record.manualOutTime || record.sysOutTime || '-') : '-'
                                                   )}
                                               </td>
-                                              {viewMode === 'admin' && (
-                                                  <td className="px-3 py-3 text-center">
+                                              {true && (
+                                                  <td className="px-3 py-3">
+                                                      {viewMode === 'admin' ? (
+                                                          <div className="flex items-center gap-2">
+                                                              <select
+                                                                  value={record?.locationId || ''}
+                                                                  onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'location', e.target.value)}
+                                                                  disabled={updating === `${selectedEmpId}_${dateISO}_location`}
+                                                                  className="text-[10px] font-bold border rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-stone-400 bg-white text-stone-700 w-36"
+                                                              >
+                                                                  <option value="">- Select Location -</option>
+                                                                  {locations.map(loc => (
+                                                                      <option key={loc.id} value={loc.id}>
+                                                                          {loc.name}
+                                                                      </option>
+                                                                  ))}
+                                                              </select>
+                                                              {updating === `${selectedEmpId}_${dateISO}_location` && <Loader2 size={12} className="animate-spin text-stone-400" />}
+                                                          </div>
+                                                      ) : (
+                                                          <span className="font-medium text-stone-800">
+                                                              {record ? (locations.find(l => l.id === record.locationId)?.name || record.locationId || '-') : '-'}
+                                                          </span>
+                                                      )}
+                                                      {/*
                                                       {record?.live_location ? (() => {
                                                           try {
                                                               const loc = JSON.parse(record.live_location);
@@ -421,7 +444,7 @@ export default function TimeCardSection({ employees, attendance, onRefresh, view
                                                       })() : (
                                                           <span className="text-stone-300">-</span>
                                                       )}
-                                                  </td>
+                                                  */ }</td>
                                               )}
                                               <td className="px-3 py-3">
                                                   {viewMode === 'admin' ? (
