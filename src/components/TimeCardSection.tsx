@@ -184,22 +184,22 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
         const doc = new jsPDF();
         
         // Header
-        doc.setFontSize(16);
+        doc.setFontSize(18);
         doc.setTextColor(41, 41, 41);
         doc.text(`TIME CARD REPORT`, 14, 15);
         
-        doc.setFontSize(10);
-        doc.text(`Employee: ${employee.name} (${employee.id})`, 14, 25);
-        doc.text(`Period: ${month}/${year}`, 14, 30);
-        doc.text(`Designation: ${employee.designation}`, 14, 35);
-        doc.text(`Category: ${employee.category}`, 14, 40);
+        doc.setFontSize(11);
+        doc.text(`Employee: ${employee.name} (${employee.id})`, 14, 22);
+        doc.text(`Period: ${month}/${year}`, 14, 27);
+        doc.text(`Designation: ${employee.designation}`, 14, 32);
+        doc.text(`Category: ${employee.category}`, 14, 37);
 
         // Summary Table
-        doc.setFontSize(12);
-        doc.text("Attendance Summary", 14, 52);
+        doc.setFontSize(13);
+        doc.text("Attendance Summary", 14, 47);
         const attnPercent = summary.workingDays > 0 ? ((summary.present / (summary.workingDays)) * 100).toFixed(1) : '0';
         autoTable(doc, {
-            startY: 55,
+            startY: 50,
             head: [[`Total Days ${year === currentYear && month === currentMonth ? '(Till Date)' : ''}`, 'Working Days', 'Present', 'Absent', 'CL', 'SL', 'Holiday', 'Festival', 'OffDay', 'Attn %']],
             body: [[
                 summary.totalDays,
@@ -215,7 +215,7 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
             ]],
             theme: 'grid',
             headStyles: { fillColor: [80, 80, 80] },
-            styles: { fontSize: 8 }
+            styles: { fontSize: 10 }
         });
         
         // Attendance Details Table
@@ -238,9 +238,9 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
         autoTable(doc, {
             head: head,
             body: body,
-            startY: (doc as any).lastAutoTable.finalY + 15,
+            startY: (doc as any).lastAutoTable.finalY + 5,
             headStyles: { fillColor: [41, 41, 41] },
-            styles: { fontSize: 9 }
+            styles: { fontSize: 10 }
         });
 
         doc.save(`TimeCard_${employee.id}_${month}_${year}.pdf`);

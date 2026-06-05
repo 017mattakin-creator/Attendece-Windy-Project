@@ -123,10 +123,11 @@ export default function App() {
       if (locError) console.error('Error fetching locations:', locError);
       else if (locData) setLocations(locData);
 
-      const { data: attData, error: attError } = await supabase.from('attendance').select('*, employees(name)');
+      const { data: attData, error: attError } = await supabase.from('attendance').select('*, employees(name)').order('date_iso', { ascending: false });
       if (attError) console.error('Error fetching attendance:', attError);
       else if (attData) {
         console.log('Fetched raw attendance data count:', attData.length);
+        console.log('Sample of raw attendance data:', attData.slice(0, 5));
         const formatted = attData.map((a: any) => {
             const row = {
                 no: a.employee_id ? String(a.employee_id).trim() : '',
@@ -222,11 +223,11 @@ export default function App() {
           const rawData = parsedLines.map(row => {
               const cleanedRow: any = {};
               for (const k of Object.keys(row)) {
-                  const cleanedKey = k.replace(/^\uFEFF/, '').trim();
+                  const cleanedKey = k.toLowerCase().replace(/^\uFEFF/, '').trim();
                   cleanedRow[cleanedKey] = row[k] !== undefined && row[k] !== null ? String(row[k]).trim() : '';
               }
               
-              const rawId = cleanedRow['No.'] || cleanedRow['No'] || cleanedRow['ID'] || cleanedRow['id'] || cleanedRow['Employee ID'] || cleanedRow['EmployeeID'] || cleanedRow.no;
+              const rawId = cleanedRow['no.'] || cleanedRow['no'] || cleanedRow['id'] || cleanedRow['employee id'] || cleanedRow['employeeid'];
               let cleanId = rawId ? String(rawId).trim() : '';
               if (cleanId.endsWith('.0')) {
                   cleanId = cleanId.slice(0, -2);
@@ -264,9 +265,9 @@ export default function App() {
           for (const rec of rawData) {
               const empId = rec._cleanEmpId;
               if (empId && !empIdSet.has(empId) && !missingEmployeesToRegister.has(empId)) {
-                  const empName = (rec['Name'] || rec['name'] || `Employee ${empId}`).trim();
-                  const designation = (rec['ID Number'] || rec['Designation'] || rec['designation'] || '').trim();
-                  const category = (rec['Department'] || rec['department'] || rec['Category'] || rec['category'] || 'staff').trim();
+                  const empName = (rec['name'] || `Employee ${empId}`).trim();
+                  const designation = (rec['id number'] || rec['designation'] || '').trim();
+                  const category = (rec['department'] || rec['category'] || 'staff').trim();
                   
                   missingEmployeesToRegister.set(empId, {
                       id: empId,
@@ -301,14 +302,9 @@ export default function App() {
           const missingLocationsToRegister = new Map<string, any>();
           for (const rec of rawData) {
               const rawLoc = String(
-                  rec['Location ID'] || 
-                  rec.locationId || 
-                  rec.location_id || 
-                  rec['Location'] || 
-                  rec.location || 
-                  rec['Location Name'] || 
-                  rec.locationName || 
-                  rec.location_name || 
+                  rec['location id'] || 
+                  rec['location'] || 
+                  rec['location name'] || 
                   ''
               ).trim();
               
@@ -356,8 +352,8 @@ export default function App() {
              const empId = rec._cleanEmpId;
              
              // Support combined DateTime or separate Date/Time columns
-             const datePart = rec['Date'] || rec['date'] || rec['Date/Time'] || rec['DateTime'] || rec.dateISO || '';
-             const timePart = rec['Time'] || rec['time'] || '';
+             const datePart = rec['date'] || rec['date/time'] || rec['datetime'] || rec.dateISO || '';
+             const timePart = rec['time'] || '';
              const dateTimeStr = (datePart + ' ' + timePart).trim();
 
              if (empId && dateTimeStr && empIdSet.has(empId)) {
@@ -374,14 +370,9 @@ export default function App() {
                         const key = `${empId}_${dateIso}`;
 
                         const rawLoc = String(
-                            rec['Location ID'] || 
-                            rec.locationId || 
-                            rec.location_id || 
-                            rec['Location'] || 
-                            rec.location || 
-                            rec['Location Name'] || 
-                            rec.locationName || 
-                            rec.location_name || 
+                            rec['location id'] || 
+                            rec['location'] || 
+                            rec['location name'] || 
                             ''
                         ).trim();
                         
@@ -400,7 +391,7 @@ export default function App() {
                                 empId,
                                 date: dateIso,
                                 punches: [],
-                                idKey: rec['ID Number'] || rec.idKey || rec.idNumber || null,
+                                idKey: rec['id number'] || rec['idkey'] || rec['idnumber'] || null,
                                 locationId: resolvedLocId
                             };
                         } else if (resolvedLocId && !groupedData[key].locationId) {
@@ -621,7 +612,7 @@ export default function App() {
           });
 
           const sanitizedAttendanceData = Object.values(finalAttendanceMap).filter((item: any) => {
-              const existed = !!(item.id || existingMap[`${item.employee_id}_${item.date_iso}`]);
+              const existed = !!(existingMap[`${item.employee_id}_${item.date_iso}`]);
               const hasPunches = !!(item.sys_in_time || item.sys_out_time || item.manual_in_time || item.manual_out_time);
               const isNonAbsent = item.status && item.status !== 'Absent';
               return existed || hasPunches || isNonAbsent;
@@ -666,6 +657,7 @@ export default function App() {
               console.error('Upsert index error:', upsertError);
               errorCount += chunk.length;
               lastErrorMsg = upsertError.message || JSON.stringify(upsertError);
+              alert('Upload failed: ' + lastErrorMsg);
             }
             
             setUploadProgress(40 + Math.round(((i + chunk.length) / sanitizedAttendanceData.length) * 60));
