@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import EmployeeSelectorModal from './EmployeeSelectorModal';
 import { UserPlus, Calendar, Clock, MapPin, Save, CheckCircle2, AlertCircle, ExternalLink, HelpCircle, Compass, ShieldAlert, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
+import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats } from '../lib/dateUtils';
 
 interface Employee {
   id: string;
@@ -213,12 +213,13 @@ export default function ManualEntrySection({
       if (!selectedEmp || !date) return;
       setFetching(true);
       try {
-        const { data, error } = await supabase
+        const { data: existingRecords, error } = await supabase
           .from('attendance')
           .select('*')
           .eq('employee_id', String(selectedEmp.id).trim())
-          .eq('date_iso', date)
-          .maybeSingle();
+          .in('date_iso', getPossibleDateFormats(date));
+        
+        const data = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
         
         if (!error && data) {
           const formatTime = (t: string) => {

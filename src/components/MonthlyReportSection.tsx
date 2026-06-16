@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileSpreadsheet, FileText } from 'lucide-react';
+import { FileSpreadsheet, FileText, Search } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
+import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats } from '../lib/dateUtils';
 
 interface Props {
     employees: any[];
@@ -44,6 +44,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
     const [month, setMonth] = useState(new Date().getMonth() + 1);
     const [year, setYear] = useState(new Date().getFullYear());
     const [updating, setUpdating] = useState<string | null>(null);
+    const [filterTerm, setFilterTerm] = useState('');
 
     const daysInMonth = new Date(year, month, 0).getDate();
     const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -74,13 +75,14 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
         setUpdating(`${empId}_${dateISO}`);
         
         try {
-            // First find if there's an existing record to preserve other fields
-            const { data: existing } = await supabase
+            // First find if there's an existing record to preserve other fields, checking all formats
+            const { data: existingRecords } = await supabase
                 .from('attendance')
                 .select('*')
                 .eq('employee_id', empId)
-                .eq('date_iso', dateISO)
-                .maybeSingle();
+                .in('date_iso', getPossibleDateFormats(dateISO));
+            
+            const existing = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
 
             const { error } = await supabase.from('attendance').upsert([{
                 ...(existing || {}),
@@ -171,12 +173,17 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
             head: head,
             body: body,
             startY: 20,
-            styles: { fontSize: 6, cellPadding: 1 },
+            styles: { fontSize: 7, cellPadding: 0.8 },
             headStyles: { fillColor: [41, 41, 41] }
         });
 
         doc.save(`Monthly_Report_${month}_${year}.pdf`);
     };
+
+    const filteredEmployees = sortedEmployees.filter(emp => 
+        String(emp.id).toLowerCase().includes(filterTerm.toLowerCase()) || 
+        emp.name.toLowerCase().includes(filterTerm.toLowerCase())
+    );
 
     return (
         <section className="bg-white p-8 rounded-lg shadow-sm border border-stone-100">
@@ -200,14 +207,27 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
             </div>
           </div>
 
-          <div className="flex gap-4 mb-6 bg-stone-50 p-4 rounded-md">
+          <div className="flex flex-wrap items-end gap-4 mb-6 bg-stone-50 p-4 rounded-md">
             <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase font-bold text-stone-500">Month</label>
-                <input type="number" value={month} onChange={e => setMonth(parseInt(e.target.value))} className="border border-stone-200 rounded p-2 text-xs w-20" placeholder="Month" />
+                <input type="number" value={month} onChange={e => setMonth(parseInt(e.target.value))} className="border border-stone-200 rounded p-2 text-xs w-20 outline-none focus:ring-1 focus:ring-stone-400" placeholder="Month" />
             </div>
             <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase font-bold text-stone-500">Year</label>
-                <input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="border border-stone-200 rounded p-2 text-xs w-24" placeholder="Year" />
+                <input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} className="border border-stone-200 rounded p-2 text-xs w-24 outline-none focus:ring-1 focus:ring-stone-400" placeholder="Year" />
+            </div>
+            <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
+                <label className="text-[10px] uppercase font-bold text-stone-500">Filter Staff (ID or Name)</label>
+                <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={14} />
+                    <input 
+                        type="text" 
+                        value={filterTerm} 
+                        onChange={e => setFilterTerm(e.target.value)} 
+                        className="w-full border border-stone-200 rounded p-2 pl-9 text-xs outline-none focus:ring-1 focus:ring-stone-400 bg-white" 
+                        placeholder="Type ID or Name to filter row..." 
+                    />
+                </div>
             </div>
           </div>
           
@@ -224,7 +244,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
                   </tr>
                </thead>
                <tbody className="divide-y divide-stone-100">
-                  {sortedEmployees.map(emp => {
+                  {filteredEmployees.map(emp => {
                       const counts: Record<string, number> = {};
                       STATUS_OPTIONS.forEach(s => counts[s.label] = 0);
                       counts['A'] = 0; // Ensure A is there even if not in options label

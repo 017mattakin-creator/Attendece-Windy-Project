@@ -89,6 +89,22 @@ export function getShiftDateForTime(now: Date, shift: 'Day' | 'Night' = 'Day'): 
   return `${year}-${month}-${day}`;
 }
 
+export function getPossibleDateFormats(dateISO: string): string[] {
+  if (!dateISO) return [];
+  const formats = [dateISO];
+  const parts = dateISO.split('-');
+  if (parts.length === 3) {
+    const y = parts[0];
+    const m = parseInt(parts[1], 10);
+    const d = parseInt(parts[2], 10);
+    // M/D/YYYY
+    formats.push(`${m}/${d}/${y}`);
+    // MM/DD/YYYY
+    formats.push(`${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}/${y}`);
+  }
+  return Array.from(new Set(formats));
+}
+
 export function formatSystemDate(dateISO: string): string {
   if (!dateISO) return '';
   try {
@@ -188,6 +204,19 @@ export function parseDateTimeToLocal(dateStr: string, timeStr: string): Date | n
   
   const result = new Date(year, month, day, hours, minutes, 0, 0);
   return isNaN(result.getTime()) ? null : result;
+}
+
+export function normalizeToYYYYMMDD(dateStr: string): string {
+  if (!dateStr) return '';
+  // If already in YYYY-MM-DD format, return as is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  
+  const d = parseDateTimeToLocal(dateStr, '00:00');
+  if (!d) return dateStr;
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export function parseCombinedDateTimeToLocal(dateTimeStr: string): Date | null {

@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileSpreadsheet, FileText, Loader2, MapPin } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, MapPin, Search } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
+import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats, normalizeToYYYYMMDD } from '../lib/dateUtils';
 
 interface Props {
     employees: any[];
@@ -16,11 +16,86 @@ interface Props {
 
 export default function TimeCardSection({ employees, attendance, locations, onRefresh, viewMode }: Props) {
     const [selectedEmpId, setSelectedEmpId] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [isSearchOpen, setIsSearchOpen] = useState(false);
     const [month, setMonth] = useState(new Date().getMonth() + 1);
     const [year, setYear] = useState(new Date().getFullYear());
     const [updating, setUpdating] = useState<string | null>(null);
+    const [localAttendance, setLocalAttendance] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
 
     const employee = employees.find(e => e.id === selectedEmpId);
+
+    // Fetch employee specific data when employee/month/year changes
+    React.useEffect(() => {
+        if (!selectedEmpId) {
+            setLocalAttendance([]);
+            return;
+        }
+
+        const fetchEmpData = async () => {
+            setIsLoading(true);
+            try {
+                // Get all possible ISO strings for this month/year for better coverage
+                // Or just fetch all for this employee and filter in JS using normalize
+                const { data, error } = await supabase
+                    .from('attendance')
+                    .select('*')
+                    .eq('employee_id', selectedEmpId);
+                
+                if (error) throw error;
+                if (data) {
+                    const mapped = data.map((a: any) => ({
+                        no: String(a.employee_id).trim(),
+                        dateISO: normalizeToYYYYMMDD(a.date_iso || ''),
+                        sysInTime: a.sys_in_time || '',
+                        sysOutTime: a.sys_out_time || '',
+                        manualInTime: a.manual_in_time || '',
+                        manualOutTime: a.manual_out_time || '',
+                        status: a.status || 'Absent',
+                        locationId: a.location_id || '',
+                        late_remark: a.late_remark || '',
+                        live_location: a.live_location || '',
+                    }));
+                    
+                    // Merge same-day records
+                    const merged: Record<string, any> = {};
+                    mapped.forEach(row => {
+                        const key = row.dateISO;
+                        if (!merged[key]) {
+                            merged[key] = row;
+                        } else {
+                            const existing = merged[key];
+                            const hasPunches = (r: any) => !!(String(r.sysInTime || '').trim() || String(r.sysOutTime || '').trim() || String(r.manualInTime || '').trim() || String(r.manualOutTime || '').trim());
+                            if (!hasPunches(existing) && hasPunches(row)) {
+                                merged[key] = { ...row, live_location: row.live_location || existing.live_location, late_remark: row.late_remark || existing.late_remark };
+                            } else {
+                                if (!existing.live_location) existing.live_location = row.live_location;
+                                if (!existing.late_remark) existing.late_remark = row.late_remark;
+                                if (existing.status === 'Absent' && row.status !== 'Absent') existing.status = row.status;
+                            }
+                        }
+                    });
+
+                    // Filter for selected month/year
+                    const filtered = Object.values(merged).filter((a: any) => {
+                        if (!a.dateISO) return false;
+                        const [y, m] = a.dateISO.split('-').map(Number);
+                        return y === year && m === month;
+                    });
+
+                    setLocalAttendance(filtered);
+                }
+            } catch (err) {
+                console.error('Error fetching employee attendance:', err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchEmpData();
+    }, [selectedEmpId, month, year]);
+
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
@@ -36,11 +111,37 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
     }
     const days = Array.from({ length: maxDay }, (_, i) => i + 1);
 
-    const empAttendance = attendance.filter(a => {
-        if (String(a.no).trim() !== String(selectedEmpId).trim()) return false;
-        const [y, m] = a.dateISO.split('-').map(Number);
-        return y === year && m === month;
-    });
+    const getStatusDisplay = (record: any, isFuture: boolean) => {
+        if (!record) return isFuture ? { label: '-', color: 'text-stone-300', bg: '' } : { label: 'A', color: 'text-red-400', value: 'Absent', bg: 'bg-red-50' };
+        
+        const hasTimes = !!(String(record.manualInTime || '').trim() || String(record.sysInTime || '').trim() || String(record.manualOutTime || '').trim() || String(record.sysOutTime || '').trim());
+        const currentStatus = record.status;
+        
+        // FESTIVAL override! If the CSV or DB says Festival, keep it!
+        if (currentStatus === 'Festival') {
+            return { label: 'F', color: 'text-purple-500', value: 'Festival', bg: 'bg-purple-50' };
+        }
+        
+        let effectiveStatus = currentStatus || 'Present';
+        if (hasTimes && (effectiveStatus === 'Absent' || !effectiveStatus)) {
+            effectiveStatus = record.manualInTime || record.manualOutTime ? 'Manual' : 'Present';
+        }
+        
+        const opt = STATUS_OPTIONS.find(o => o.value === effectiveStatus);
+        return opt ? { label: opt.label, color: opt.color, value: effectiveStatus, bg: opt.bg } : { label: 'P', color: 'text-green-600', value: 'Present', bg: 'bg-green-50' };
+    };
+
+    const summary = {
+        totalDays: days.length,
+        present: 0,
+        absent: 0,
+        cl: 0,
+        sl: 0,
+        holiday: 0,
+        festival: 0,
+        offDay: 0,
+        workingDays: 0 
+    };
 
     const STATUS_OPTIONS = [
         { label: 'P', value: 'Present', color: 'text-green-600', bg: 'bg-green-50' },
@@ -53,28 +154,9 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
         { label: 'O', value: 'OffDay', color: 'text-stone-500', bg: 'bg-stone-50' },
     ];
 
-    const getStatusDisplay = (record: any, isFuture: boolean) => {
-        if (!record) return isFuture ? { label: '-', color: 'text-stone-300', bg: '' } : { label: 'A', color: 'text-red-400', value: 'Absent', bg: 'bg-red-50' };
-        const opt = STATUS_OPTIONS.find(o => o.value === record.status);
-        return opt ? { label: opt.label, color: opt.color, value: record.status, bg: opt.bg } : { label: 'P', color: 'text-green-600', value: record.status, bg: 'bg-green-50' };
-    };
-
-    // Summary calculation
-    const summary = {
-        totalDays: days.length,
-        present: 0,
-        absent: 0,
-        cl: 0,
-        sl: 0,
-        holiday: 0,
-        festival: 0,
-        offDay: 0,
-        workingDays: 0 // Present + CL + SL
-    };
-
     days.forEach(d => {
         const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const record = empAttendance.find(a => a.dateISO === dateISO);
+        const record = localAttendance.find(a => a.dateISO === dateISO);
         const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
         const status = getStatusDisplay(record, isFuture);
 
@@ -100,16 +182,36 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
         }
     });
 
+    const ensureTime24h = (timeStr: string) => {
+        if (!timeStr) return '';
+        const trimmed = timeStr.trim();
+        if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) {
+            const [h, m] = trimmed.split(':');
+            return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
+        }
+        const match = trimmed.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (match) {
+            let h = parseInt(match[1], 10);
+            const m = match[2];
+            const ampm = match[3].toUpperCase();
+            if (ampm === 'PM' && h < 12) h += 12;
+            if (ampm === 'AM' && h === 12) h = 0;
+            return `${String(h).padStart(2, '0')}:${m}`;
+        }
+        return trimmed;
+    };
+
     const handleAttendanceUpdate = async (empId: string, dateISO: string, field: string, newValue: string) => {
         setUpdating(`${empId}_${dateISO}_${field}`);
         
         try {
-            const { data: existing } = await supabase
+            const { data: existingRecords } = await supabase
                 .from('attendance')
                 .select('*')
                 .eq('employee_id', empId)
-                .eq('date_iso', dateISO)
-                .maybeSingle();
+                .in('date_iso', getPossibleDateFormats(dateISO));
+            
+            const existing = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
 
             const updatePayload: any = {
                 ...(existing || {}),
@@ -118,8 +220,18 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
             };
 
             if (field === 'status') updatePayload.status = newValue;
-            if (field === 'in') updatePayload.manual_in_time = newValue;
-            if (field === 'out') updatePayload.manual_out_time = newValue;
+            if (field === 'in') {
+                updatePayload.manual_in_time = newValue;
+                if (updatePayload.status === 'Absent' || !updatePayload.status) {
+                    updatePayload.status = 'Manual';
+                }
+            }
+            if (field === 'out') {
+                updatePayload.manual_out_time = newValue;
+                if (updatePayload.status === 'Absent' || !updatePayload.status) {
+                    updatePayload.status = 'Manual';
+                }
+            }
             if (field === 'remarks') updatePayload.late_remark = newValue;
             if (field === 'location') updatePayload.location_id = newValue || null;
 
@@ -139,37 +251,28 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
 
     const exportToExcel = () => {
         if (!employee) return;
-        
-        // Prepare main data
         const data = days.map(d => {
             const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const record = empAttendance.find(a => a.dateISO === dateISO);
+            const record = localAttendance.find(a => a.dateISO === dateISO);
             const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
             const status = getStatusDisplay(record, isFuture);
-            const base = {
+            return {
                 'Date': dateISO,
                 'In Time': record ? (record.manualInTime || record.sysInTime) : '-',
                 'Out Time': record ? (record.manualOutTime || record.sysOutTime) : '-',
                 'Project Location': record ? (locations.find(l => l.id === record.locationId)?.name || record.locationId || '-') : '-',
-                'Status': status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present'))),
+                'Status': status.label === '-' ? '-' : (status.value === 'Manual' || status.value === 'Present' ? 'Present' : (status.value || 'Absent')),
                 'Remarks / Comments': record?.late_remark || '-'
             };
-            return base;
         });
 
-        // Add summary row at bottom
         const summaryData = [
-            {}, // empty row
+            {}, 
             { 'Date': 'SUMMARY REPORT' },
-            { 'Date': `Total Days ${year === currentYear && month === currentMonth ? '(Till Date)' : ''}`, 'In Time': summary.totalDays },
+            { 'Date': `Total Days`, 'In Time': summary.totalDays },
             { 'Date': 'Working Days (P+CL+SL)', 'In Time': summary.workingDays },
             { 'Date': 'Present', 'In Time': summary.present },
             { 'Date': 'Absent', 'In Time': summary.absent },
-            { 'Date': 'CL', 'In Time': summary.cl },
-            { 'Date': 'SL', 'In Time': summary.sl },
-            { 'Date': 'Holiday', 'In Time': summary.holiday },
-            { 'Date': 'Festival', 'In Time': summary.festival },
-            { 'Date': 'Off Day', 'In Time': summary.offDay },
             { 'Date': 'Attendance %', 'In Time': (summary.workingDays > 0 ? ((summary.present / (summary.workingDays)) * 100).toFixed(1) : '0') + '%' }
         ];
 
@@ -180,70 +283,73 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
     };
 
     const exportToPDF = () => {
-        if (!employee) return;
-        const doc = new jsPDF();
-        
-        // Header
-        doc.setFontSize(18);
-        doc.setTextColor(41, 41, 41);
-        doc.text(`TIME CARD REPORT`, 14, 15);
-        
-        doc.setFontSize(11);
-        doc.text(`Employee: ${employee.name} (${employee.id})`, 14, 22);
-        doc.text(`Period: ${month}/${year}`, 14, 27);
-        doc.text(`Designation: ${employee.designation}`, 14, 32);
-        doc.text(`Category: ${employee.category}`, 14, 37);
+        try {
+            if (!employee) return;
+            const doc = new jsPDF();
+            
+            doc.setFontSize(18);
+            doc.setTextColor(41, 41, 41);
+            doc.text(`TIME CARD REPORT`, 14, 15);
+            
+            doc.setFontSize(11);
+            doc.text(`Employee: ${employee.name} (${employee.id})`, 14, 22);
+            doc.text(`Period: ${month}/${year}`, 14, 27);
+            doc.text(`Designation: ${employee.designation}`, 14, 32);
+            doc.text(`Category: ${employee.category}`, 14, 37);
 
-        // Summary Table
-        doc.setFontSize(13);
-        doc.text("Attendance Summary", 14, 47);
-        const attnPercent = summary.workingDays > 0 ? ((summary.present / (summary.workingDays)) * 100).toFixed(1) : '0';
-        autoTable(doc, {
-            startY: 50,
-            head: [[`Total Days ${year === currentYear && month === currentMonth ? '(Till Date)' : ''}`, 'Working Days', 'Present', 'Absent', 'CL', 'SL', 'Holiday', 'Festival', 'OffDay', 'Attn %']],
-            body: [[
-                summary.totalDays,
-                summary.workingDays,
-                summary.present,
-                summary.absent,
-                summary.cl,
-                summary.sl,
-                summary.holiday,
-                summary.festival,
-                summary.offDay,
-                attnPercent + "%"
-            ]],
-            theme: 'grid',
-            headStyles: { fillColor: [80, 80, 80] },
-            styles: { fontSize: 10 }
-        });
-        
-        // Attendance Details Table
-        const head = [['Date', 'In Time', 'Out Time', 'Project Location', 'Status', 'Remarks / Comments']];
-        const body = days.map(d => {
-            const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const record = empAttendance.find(a => a.dateISO === dateISO);
-            const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
-            const status = getStatusDisplay(record, isFuture);
-            return [
-                dateISO,
-                record ? (record.manualInTime || record.sysInTime) : '-',
-                record ? (record.manualOutTime || record.sysOutTime) : '-',
-                record ? (locations.find(l => l.id === record.locationId)?.name || record.locationId || '-') : '-',
-                status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present'))),
-                record?.late_remark || '-'
-            ];
-        });
+            doc.setFontSize(14);
+            doc.text("Attendance Summary", 14, 45);
+            const attnPercent = summary.workingDays > 0 ? ((summary.present / (summary.workingDays)) * 100).toFixed(1) : '0';
+            autoTable(doc, {
+                startY: 48,
+                head: [['Days', 'Working', 'Present', 'Absent', 'CL', 'SL', 'Hol', 'Fest', 'Off', 'Attn %']],
+                body: [[
+                    summary.totalDays,
+                    summary.workingDays,
+                    summary.present,
+                    summary.absent,
+                    summary.cl,
+                    summary.sl,
+                    summary.holiday,
+                    summary.festival,
+                    summary.offDay,
+                    attnPercent + "%"
+                ]],
+                theme: 'grid',
+                headStyles: { fillColor: [80, 80, 80] },
+                styles: { fontSize: 9 }
+            });
+            
+            const head = [['Date', 'In', 'Out', 'Location', 'Status', 'Remarks']];
+            const body = days.map(d => {
+                const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                const record = localAttendance.find(a => a.dateISO === dateISO);
+                const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
+                const status = getStatusDisplay(record, isFuture);
+                const statusLine = status.label === '-' ? '-' : (status.value === 'Manual' || status.value === 'Present' ? 'Present' : (status.value || 'Absent'));
+                return [
+                    dateISO,
+                    record ? (record.manualInTime || record.sysInTime || '-') : '-',
+                    record ? (record.manualOutTime || record.sysOutTime || '-') : '-',
+                    record ? (locations.find(l => l.id === record.locationId)?.name || record.locationId || '-') : '-',
+                    statusLine,
+                    record?.late_remark || '-'
+                ];
+            });
 
-        autoTable(doc, {
-            head: head,
-            body: body,
-            startY: (doc as any).lastAutoTable.finalY + 5,
-            headStyles: { fillColor: [41, 41, 41] },
-            styles: { fontSize: 10 }
-        });
+            autoTable(doc, {
+                head: head,
+                body: body,
+                startY: (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 4 : 62,
+                headStyles: { fillColor: [41, 41, 41] },
+                styles: { fontSize: 9 }
+            });
 
-        doc.save(`TimeCard_${employee.id}_${month}_${year}.pdf`);
+            doc.save(`TimeCard_${employee.id}_${month}_${year}.pdf`);
+        } catch (err: any) {
+            console.error('PDF Error:', err);
+            alert('Failed to generate PDF: ' + err.message);
+        }
     };
 
     return (
@@ -252,31 +358,70 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
             <h2 className="text-sm font-bold uppercase tracking-widest text-stone-800">Time Card & Analysis</h2>
             {employee && (
                 <div className="flex gap-2">
-                    <button 
-                      onClick={exportToExcel}
-                      className="flex items-center gap-2 bg-green-700 text-white px-3 py-2 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-green-800 transition-colors"
-                    >
-                        <FileSpreadsheet size={14} />
-                        Excel Report
+                    <button onClick={exportToExcel} className="flex items-center gap-2 bg-green-700 text-white px-3 py-2 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-green-800 transition-colors">
+                        <FileSpreadsheet size={14} /> Excel
                     </button>
-                    <button 
-                      onClick={exportToPDF}
-                      className="flex items-center gap-2 bg-red-700 text-white px-3 py-2 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-800 transition-colors"
-                    >
-                        <FileText size={14} />
-                        PDF Report
+                    <button onClick={exportToPDF} className="flex items-center gap-2 bg-red-700 text-white px-3 py-2 rounded text-[10px] font-bold uppercase tracking-wider hover:bg-red-800 transition-colors">
+                        <FileText size={14} /> PDF
                     </button>
                 </div>
             )}
           </div>
           
           <div className="flex flex-wrap gap-4 mb-8 bg-stone-50 p-4 rounded-md border border-stone-100">
-            <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase font-bold text-stone-500">Select Employee</label>
-                <select value={selectedEmpId || ''} onChange={e => setSelectedEmpId(e.target.value)} className="border border-stone-200 rounded p-2 text-xs w-64 focus:ring-1 focus:ring-stone-400 outline-none">
-                    <option value="">Choose an employee...</option>
-                    {employees.map(e => <option key={e.id} value={e.id}>{e.id} - {e.name}</option>)}
-                </select>
+            <div className="flex flex-col gap-1 relative">
+                <label className="text-[10px] uppercase font-bold text-stone-500">Select Employee (Search by ID or Name)</label>
+                <div className="relative w-72">
+                    <div 
+                        onClick={() => setIsSearchOpen(!isSearchOpen)}
+                        className="flex items-center justify-between border border-stone-200 rounded p-2 text-xs bg-white cursor-pointer hover:border-stone-400 transition-colors"
+                    >
+                        <span className="truncate">
+                            {selectedEmpId ? (employees.find(e => e.id === selectedEmpId)?.id + ' - ' + employees.find(e => e.id === selectedEmpId)?.name) : 'Choose an employee...'}
+                        </span>
+                        <Search size={14} className="text-stone-400" />
+                    </div>
+
+                    {isSearchOpen && (
+                        <div className="absolute z-50 mt-1 w-full bg-white border border-stone-200 rounded shadow-xl max-h-64 overflow-hidden flex flex-col">
+                            <div className="p-2 border-b border-stone-100 bg-stone-50">
+                                <input 
+                                    type="text" 
+                                    autoFocus
+                                    placeholder="Search ID or Name..."
+                                    value={searchTerm}
+                                    onChange={e => setSearchTerm(e.target.value)}
+                                    className="w-full p-1.5 text-xs border border-stone-200 rounded outline-none focus:ring-1 focus:ring-stone-400"
+                                />
+                            </div>
+                            <div className="overflow-y-auto">
+                                {employees
+                                    .filter(e => 
+                                        String(e.id).toLowerCase().includes(searchTerm.toLowerCase()) || 
+                                        e.name.toLowerCase().includes(searchTerm.toLowerCase())
+                                    )
+                                    .slice(0, 100)
+                                    .map(e => (
+                                        <div 
+                                            key={e.id}
+                                            onClick={() => {
+                                                setSelectedEmpId(e.id);
+                                                setIsSearchOpen(false);
+                                                setSearchTerm('');
+                                            }}
+                                            className={`p-2 text-xs cursor-pointer hover:bg-stone-50 border-b border-stone-50 last:border-0 ${selectedEmpId === e.id ? 'bg-amber-50 font-bold border-l-2 border-l-amber-400' : ''}`}
+                                        >
+                                            <div className="font-bold text-stone-800">{e.id}</div>
+                                            <div className="text-stone-600 truncate">{e.name}</div>
+                                        </div>
+                                    ))}
+                                {employees.filter(e => String(e.id).toLowerCase().includes(searchTerm.toLowerCase()) || e.name.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 && (
+                                    <div className="p-4 text-center text-xs text-stone-400">No results found</div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
             <div className="flex flex-col gap-1">
                 <label className="text-[10px] uppercase font-bold text-stone-500">Month</label>
@@ -289,205 +434,151 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
           </div>
 
           {employee && (
-              <div className="mt-8">
+              <div className={`mt-8 ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
+                  {isLoading && (
+                      <div className="flex items-center gap-2 text-amber-600 font-bold text-xs mb-4">
+                          <Loader2 className="animate-spin" size={16} /> Fetching records...
+                      </div>
+                  )}
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8 border-b border-stone-100 pb-8">
                       <div className="flex items-center gap-4">
                           <div className="w-16 h-16 bg-stone-800 text-white rounded-full flex items-center justify-center font-bold text-xl ring-4 ring-stone-50 shadow-sm">{employee.name.charAt(0)}</div>
                           <div>
                               <h3 className="font-bold text-xl text-stone-900">{employee.name}</h3>
-                              <p className="text-xs font-medium text-stone-500 uppercase tracking-wider flex items-center flex-wrap gap-2">
-                                  <span>{employee.designation} • Category: {employee.category} • ID: {employee.id}</span>
-                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                      getEmployeeShift(employee.id) === 'Night' ? 'bg-indigo-50 border border-indigo-150 text-indigo-700' : 'bg-amber-50 border border-amber-100 text-amber-800'
-                                  }`}>
-                                      {getEmployeeShift(employee.id) === 'Night' ? '🌙 NIGHT SHIFT' : '☀️ DAY SHIFT'}
+                              <p className="text-xs font-medium text-stone-500 uppercase tracking-wider flex flex-wrap gap-2">
+                                  <span>{employee.designation} • Cat: {employee.category} • ID: {employee.id}</span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${getEmployeeShift(employee.id) === 'Night' ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-800'}`}>
+                                      {getEmployeeShift(employee.id) === 'Night' ? '🌙 NIGHT' : '☀️ DAY'}
                                   </span>
                               </p>
                           </div>
                       </div>
                       
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                          <div className="bg-stone-50 p-3 rounded border border-stone-100 text-center">
-                              <p className="text-[10px] uppercase font-bold text-stone-400">
-                                  Total Days {year === currentYear && month === currentMonth ? '(Till Date)' : ''}
-                              </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                          <div className="bg-stone-50 p-2.5 rounded border border-stone-100 text-center">
+                              <p className="text-[9px] uppercase font-bold text-stone-400">Total</p>
                               <p className="text-lg font-bold text-stone-800">{summary.totalDays}</p>
                           </div>
-                          <div className="bg-green-50 p-3 rounded border border-green-100 text-center">
-                              <p className="text-[10px] uppercase font-bold text-green-600">Present</p>
+                          <div className="bg-green-50 p-2.5 rounded border border-green-100 text-center">
+                              <p className="text-[9px] uppercase font-bold text-green-600">Present</p>
                               <p className="text-lg font-bold text-green-700">{summary.present}</p>
                           </div>
-                          <div className="bg-red-50 p-3 rounded border border-red-100 text-center">
-                              <p className="text-[10px] uppercase font-bold text-red-400">Absent</p>
+                          <div className="bg-red-50 p-2.5 rounded border border-red-100 text-center">
+                              <p className="text-[9px] uppercase font-bold text-red-400">Absent</p>
                               <p className="text-lg font-bold text-red-600">{summary.absent}</p>
                           </div>
-                          <div className="bg-blue-50 p-3 rounded border border-blue-100 text-center">
-                              <p className="text-[10px] uppercase font-bold text-blue-600">Working Days</p>
-                              <p className="text-lg font-bold text-blue-700" title="Present + CL + SL">{summary.workingDays}</p>
+                          <div className="bg-blue-50 p-2.5 rounded border border-blue-100 text-center">
+                              <p className="text-[9px] uppercase font-bold text-blue-600">Working</p>
+                              <p className="text-lg font-bold text-blue-700">{summary.workingDays}</p>
                           </div>
-                          <div className="bg-amber-50 p-3 rounded border border-amber-100 text-center">
-                              <p className="text-[10px] uppercase font-bold text-amber-600">Attn. %</p>
-                              <p className="text-lg font-bold text-amber-700">
-                                  {summary.workingDays > 0 ? ((summary.present / summary.workingDays) * 100).toFixed(1) : '0'}%
-                              </p>
+                          <div className="bg-amber-50 p-2.5 rounded border border-amber-100 text-center">
+                              <p className="text-[9px] uppercase font-bold text-amber-600">Attn. %</p>
+                              <p className="text-lg font-bold text-amber-700">{summary.workingDays > 0 ? ((summary.present / summary.workingDays) * 100).toFixed(1) : '0'}%</p>
                           </div>
                       </div>
                   </div>
 
-                  {/* Detailed Analysis Badges */}
-                  <div className="flex flex-wrap gap-2 mb-8">
-                      <div className="flex items-center gap-2 px-3 py-1 bg-stone-50 rounded-full border border-stone-200 text-[10px] font-bold text-stone-600 uppercase">
-                          <span>CL: {summary.cl}</span>
-                      </div>
-                      <div className="flex items-center gap-2 px-3 py-1 bg-stone-50 rounded-full border border-stone-200 text-[10px] font-bold text-stone-600 uppercase">
-                          <span>SL: {summary.sl}</span>
-                      </div>
-                      <div className="flex items-center gap-2 px-3 py-1 bg-stone-50 rounded-full border border-stone-200 text-[10px] font-bold text-stone-600 uppercase">
-                          <span>Holiday: {summary.holiday}</span>
-                      </div>
-                      <div className="flex items-center gap-2 px-3 py-1 bg-stone-50 rounded-full border border-stone-200 text-[10px] font-bold text-stone-600 uppercase">
-                          <span>Festival: {summary.festival}</span>
-                      </div>
-                      <div className="flex items-center gap-2 px-3 py-1 bg-stone-50 rounded-full border border-stone-200 text-[10px] font-bold text-stone-600 uppercase">
-                          <span>Off Day: {summary.offDay}</span>
-                      </div>
-                  </div>
-
-                  <div className="overflow-x-auto bg-white border border-stone-100 rounded shadow-sm">
+                  <div className="overflow-x-auto bg-white border border-stone-100 rounded">
                     <table className="min-w-full text-xs text-left text-stone-700">
                        <thead className="text-[10px] bg-stone-50 text-stone-500 uppercase font-bold border-b border-stone-200">
                           <tr>
-                             <th className="px-3 py-3">Date</th>
-                             <th className="px-3 py-3">In Time</th>
-                             <th className="px-3 py-3">Out Time</th>
-                              <th className="px-3 py-3">Project Location</th>
-                             <th className="px-3 py-3">Status</th>
-                             <th className="px-3 py-3">Remarks / Comments (মন্তব্য)</th>
+                             <th className="px-3 py-3 w-28">Date</th>
+                             <th className="px-3 py-3 w-32">In Time</th>
+                             <th className="px-3 py-3 w-32">Out Time</th>
+                             <th className="px-3 py-3">Location</th>
+                             <th className="px-3 py-3 w-28">Status</th>
+                             <th className="px-3 py-3">Remarks</th>
                           </tr>
                        </thead>
                        <tbody className="divide-y divide-stone-100">
-                                  {days.map(d => {
-                                      const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                                      const record = empAttendance.find(a => a.dateISO === dateISO);
-                                      const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
-                                      const status = getStatusDisplay(record, isFuture);
+                            {days.map(d => {
+                                const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                                const record = localAttendance.find(a => a.dateISO === dateISO);
+                                const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(selectedEmpId));
+                                const status = getStatusDisplay(record, isFuture);
 
-                                      return (
-                                          <tr key={d} className="hover:bg-stone-50 transition-colors">
-                                              <td className="px-3 py-3 font-medium">{dateISO}</td>
-                                              <td className="px-3 py-3">
-                                                  {viewMode === 'admin' ? (
-                                                      <input 
-                                                          type="time"
-                                                          defaultValue={record ? (record.manualInTime || record.sysInTime || '') : ''}
-                                                          onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'in', e.target.value)}
-                                                          className="w-24 text-[10px] border border-stone-200 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-amber-400"
-                                                      />
-                                                  ) : (
-                                                      record ? (record.manualInTime || record.sysInTime || '-') : '-'
-                                                  )}
-                                              </td>
-                                              <td className="px-3 py-3">
-                                                  {viewMode === 'admin' ? (
-                                                      <input 
-                                                          type="time"
-                                                          defaultValue={record ? (record.manualOutTime || record.sysOutTime || '') : ''}
-                                                          onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'out', e.target.value)}
-                                                          className="w-24 text-[10px] border border-stone-200 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-amber-400"
-                                                      />
-                                                  ) : (
-                                                      record ? (record.manualOutTime || record.sysOutTime || '-') : '-'
-                                                  )}
-                                              </td>
-                                              {true && (
-                                                  <td className="px-3 py-3">
-                                                      {viewMode === 'admin' ? (
-                                                          <div className="flex items-center gap-2">
-                                                              <select
-                                                                  value={record?.locationId || ''}
-                                                                  onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'location', e.target.value)}
-                                                                  disabled={updating === `${selectedEmpId}_${dateISO}_location`}
-                                                                  className="text-[10px] font-bold border rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-stone-400 bg-white text-stone-700 w-36"
-                                                              >
-                                                                  <option value="">- Select Location -</option>
-                                                                  {locations.map(loc => (
-                                                                      <option key={loc.id} value={loc.id}>
-                                                                          {loc.name}
-                                                                      </option>
-                                                                  ))}
-                                                              </select>
-                                                              {updating === `${selectedEmpId}_${dateISO}_location` && <Loader2 size={12} className="animate-spin text-stone-400" />}
-                                                          </div>
-                                                      ) : (
-                                                          <span className="font-medium text-stone-800">
-                                                              {record ? (locations.find(l => l.id === record.locationId)?.name || record.locationId || '-') : '-'}
-                                                          </span>
-                                                      )}
-                                                      {/*
-                                                      {record?.live_location ? (() => {
-                                                          try {
-                                                              const loc = JSON.parse(record.live_location);
-                                                              return (
-                                                                  <a 
-                                                                      href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
-                                                                      target="_blank"
-                                                                      rel="noreferrer"
-                                                                      className="inline-flex items-center gap-1 text-[10px] bg-red-50 text-red-600 px-2 py-1 rounded border border-red-100 hover:bg-red-100 transition-colors"
-                                                                      title={`${loc.lat}, ${loc.lng}`}
-                                                                  >
-                                                                      <MapPin size={10} /> Map
-                                                                  </a>
-                                                              );
-                                                          } catch (e) {
-                                                              return <span className="text-stone-300">-</span>;
-                                                          }
-                                                      })() : (
-                                                          <span className="text-stone-300">-</span>
-                                                      )}
-                                                  */ }</td>
-                                              )}
-                                              <td className="px-3 py-3">
-                                                  {viewMode === 'admin' ? (
-                                                      <div className="flex items-center gap-2">
-                                                          <select
-                                                              value={status.value || 'Absent'}
-                                                              onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'status', e.target.value)}
-                                                              disabled={updating?.startsWith(`${selectedEmpId}_${dateISO}`)}
-                                                              className={`text-[10px] font-bold border rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-stone-400 ${status.color} ${status.bg}`}
-                                                          >
-                                                              {STATUS_OPTIONS.filter(o => o.value !== 'Manual' || status.value === 'Manual').map(opt => (
-                                                                  <option key={opt.value} value={opt.value}>{opt.value}</option>
-                                                              ))}
-                                                              {!STATUS_OPTIONS.find(o => o.value === status.value) && status.value && (
-                                                                  <option value={status.value}>{status.value}</option>
-                                                              )}
-                                                          </select>
-                                                          {updating?.startsWith(`${selectedEmpId}_${dateISO}`) && <Loader2 size={12} className="animate-spin text-stone-400" />}
-                                                      </div>
-                                                  ) : (
-                                                      <span className={`font-bold ${status.color}`}>
-                                                          {status.label === 'A' ? 'Absent' : (status.label === '-' ? '-' : (status.value === 'Manual' ? 'Present' : (status.value || 'Present')))}
-                                                      </span>
-                                                  )}
-                                              </td>
-                                              <td className="px-3 py-3">
-                                                  {viewMode === 'admin' ? (
-                                                      <input 
-                                                          type="text"
-                                                          placeholder="মন্তব্য..."
-                                                          defaultValue={record?.late_remark || ''}
-                                                          onBlur={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'remarks', e.target.value)}
-                                                          className="w-36 text-xs border border-stone-200 rounded px-1.5 py-1 outline-none focus:ring-1 focus:ring-amber-400 font-medium text-stone-800"
-                                                      />
-                                                  ) : (
-                                                      <span className="italic text-stone-600 font-medium text-[11px] select-text">
-                                                          {record?.late_remark || <span className="text-stone-300">-</span>}
-                                                      </span>
-                                                  )}
-                                              </td>
-                                          </tr>
-                                      )
-                                  })}
+                                return (
+                                    <tr key={d} className="hover:bg-stone-50 transition-colors">
+                                        <td className="px-3 py-3 font-medium text-stone-900">{dateISO}</td>
+                                        <td className="px-3 py-3 font-semibold text-stone-700">
+                                            {viewMode === 'admin' ? (
+                                                <input 
+                                                    type="time"
+                                                    key={`${selectedEmpId}_${dateISO}_in_${record?.manualInTime || record?.sysInTime}_${record?.status}`}
+                                                    defaultValue={record ? ensureTime24h(record.manualInTime || record.sysInTime || '') : ''}
+                                                    onBlur={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'in', e.target.value)}
+                                                    className="w-24 text-[10px] border border-stone-200 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-amber-400"
+                                                />
+                                            ) : (
+                                                record ? (record.manualInTime || record.sysInTime || record.manualOutTime || record.sysOutTime ? (record.manualInTime || record.sysInTime || '-') : '-') : '-'
+                                            )}
+                                        </td>
+                                        <td className="px-3 py-3 font-semibold text-stone-700">
+                                            {viewMode === 'admin' ? (
+                                                <input 
+                                                    type="time"
+                                                    key={`${selectedEmpId}_${dateISO}_out_${record?.manualOutTime || record?.sysOutTime}_${record?.status}`}
+                                                    defaultValue={record ? ensureTime24h(record.manualOutTime || record.sysOutTime || '') : ''}
+                                                    onBlur={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'out', e.target.value)}
+                                                    className="w-24 text-[10px] border border-stone-200 rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-amber-400"
+                                                />
+                                            ) : (
+                                                record ? (record.manualOutTime || record.sysOutTime || '-') : '-'
+                                            )}
+                                        </td>
+                                        <td className="px-3 py-3">
+                                            {viewMode === 'admin' ? (
+                                                <div className="flex items-center gap-2">
+                                                    <select
+                                                        value={record?.locationId || ''}
+                                                        onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'location', e.target.value)}
+                                                        className="text-[10px] font-bold border rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-stone-400 bg-white text-stone-700 w-36"
+                                                    >
+                                                        <option value="">- Location -</option>
+                                                        {locations.map(loc => <option key={loc.id} value={loc.id}>{loc.name}</option>)}
+                                                    </select>
+                                                </div>
+                                            ) : (
+                                                <span className="font-medium text-stone-800">
+                                                    {record ? (locations.find(l => l.id === record.locationId)?.name || record.locationId || (record.live_location ? 'Live Location' : '-')) : '-'}
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-3 py-3">
+                                            {viewMode === 'admin' ? (
+                                                <select
+                                                    value={status.value || 'Absent'}
+                                                    onChange={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'status', e.target.value)}
+                                                    className={`text-[10px] font-bold border rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-stone-400 ${status.color} ${status.bg}`}
+                                                >
+                                                    {STATUS_OPTIONS.map(opt => (
+                                                        <option key={opt.value} value={opt.value}>{opt.value}</option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <span className={`font-bold ${status.color}`}>
+                                                    {status.label === '-' ? '-' : (status.value === 'Manual' || status.value === 'Present' ? 'Present' : (status.value || 'Absent'))}
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-3 py-3">
+                                            {viewMode === 'admin' ? (
+                                                <input 
+                                                    type="text"
+                                                    placeholder="মন্তব্য..."
+                                                    defaultValue={record?.late_remark || ''}
+                                                    onBlur={(e) => handleAttendanceUpdate(selectedEmpId, dateISO, 'remarks', e.target.value)}
+                                                    className="w-36 text-xs border border-stone-200 rounded px-1.5 py-1 outline-none focus:ring-1 focus:ring-amber-400 font-medium text-stone-800"
+                                                />
+                                            ) : (
+                                                <span className="italic text-stone-600 font-medium text-[11px]">
+                                                    {record?.late_remark || <span className="text-stone-300">-</span>}
+                                                </span>
+                                            )}
+                                        </td>
+                                    </tr>
+                                )
+                            })}
                        </tbody>
                     </table>
                   </div>

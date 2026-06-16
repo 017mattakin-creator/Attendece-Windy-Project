@@ -18,7 +18,7 @@ import LocationSection from './components/LocationSection';
 import UploadSection from './components/UploadSection';
 import ManualEntrySection from './components/ManualEntrySection';
 import LiveLocationMap from './components/LiveLocationMap';
-import { getTodayShiftDate, formatSystemDate, getEmployeeShift, getShiftDateForTime, parseCombinedDateTimeToLocal, getShiftRelativeMinutes, cacheDbShift, parseEducationAndShift } from './lib/dateUtils';
+import { getTodayShiftDate, formatSystemDate, getEmployeeShift, getShiftDateForTime, parseCombinedDateTimeToLocal, getShiftRelativeMinutes, cacheDbShift, parseEducationAndShift, normalizeToYYYYMMDD, getPossibleDateFormats } from './lib/dateUtils';
 
 interface AttendanceRecord {
   name: string;
@@ -123,17 +123,25 @@ export default function App() {
       if (locError) console.error('Error fetching locations:', locError);
       else if (locData) setLocations(locData);
 
-      const { data: attData, error: attError } = await supabase.from('attendance').select('*, employees(name)').order('date_iso', { ascending: false });
+      const { data: attData, error: attError } = await supabase.from('attendance').select('*, employees(name)').order('created_at', { ascending: false }).limit(25000);
       if (attError) console.error('Error fetching attendance:', attError);
       else if (attData) {
-        console.log('Fetched raw attendance data count:', attData.length);
-        console.log('Sample of raw attendance data:', attData.slice(0, 5));
-        const formatted = attData.map((a: any) => {
+        // Group by emp_id + normalized date to merge legacy and new format records
+        const mergedMap: Record<string, any> = {};
+        
+        // Process records - since they are ordered by created_at DESC, we encounter newest updates first
+        attData.forEach((a: any) => {
+            const empId = a.employee_id ? String(a.employee_id).trim() : '';
+            if (!empId) return;
+            const normalizedDate = normalizeToYYYYMMDD(a.date_iso || '');
+            if (!normalizedDate) return;
+            const key = `${empId}_${normalizedDate}`;
+            
             const row = {
-                no: a.employee_id ? String(a.employee_id).trim() : '',
+                no: empId,
                 name: a.employees?.name || 'Unknown',
-                dateISO: a.date_iso || '',
-                date: a.date_iso || '',
+                dateISO: normalizedDate,
+                date: normalizedDate,
                 sysInTime: a.sys_in_time || '',
                 sysOutTime: a.sys_out_time || '',
                 manualInTime: a.manual_in_time || '',
@@ -146,12 +154,37 @@ export default function App() {
                 live_location_out: a.live_location_out || '',
                 late_remark: a.late_remark || '',
             };
-            if (row.name === 'Unknown') {
-              console.warn('Employee JOIN failed for record:', a);
+
+            if (!mergedMap[key]) {
+                mergedMap[key] = row;
+            } else {
+                // Merge logic: if existing has no punches and row does, take row
+                const existing = mergedMap[key];
+                const hasPunches = (r: any) => !!(String(r.sysInTime || '').trim() || String(r.sysOutTime || '').trim() || String(r.manualInTime || '').trim() || String(r.manualOutTime || '').trim());
+                
+                const rowHasPunches = hasPunches(row);
+                const existingHasPunches = hasPunches(existing);
+
+                if (!existingHasPunches && rowHasPunches) {
+                    // This row (which is older in created_at but has punches) is better
+                    // Keep existing non-punch fields like live_location if row missing them
+                    const merged = { ...row };
+                    if (!merged.live_location) merged.live_location = existing.live_location;
+                    if (!merged.late_remark) merged.late_remark = existing.late_remark;
+                    mergedMap[key] = merged;
+                } else {
+                    // Update existing with fields from this (older) row if existing missing them
+                    if (!existing.live_location) existing.live_location = row.live_location;
+                    if (!existing.late_remark) existing.late_remark = row.late_remark;
+                    if (existing.status === 'Absent' && row.status && row.status !== 'Absent') {
+                        existing.status = row.status;
+                    }
+                }
             }
-            return row;
         });
-        setAttendance(formatted);
+
+        const formatted = Object.values(mergedMap);
+        setAttendance(formatted as AttendanceRecord[]);
       }
     }
   };
@@ -451,8 +484,14 @@ export default function App() {
                   
                   if (!fetchError && records) {
                       records.forEach((r: any) => {
-                          const key = `${String(r.employee_id).trim()}_${r.date_iso}`;
-                          existingMap[key] = r;
+                          const normalizedDate = normalizeToYYYYMMDD(r.date_iso || '');
+                          const key = `${String(r.employee_id).trim()}_${normalizedDate}`;
+                          // If there are multiple records for the same normalized date (legacy duplicates),
+                          // prefer the one with punches.
+                          const hasPunches = (rec: any) => !!(rec.sys_in_time || rec.sys_out_time || rec.manual_in_time || rec.manual_out_time);
+                          if (!existingMap[key] || (!hasPunches(existingMap[key]) && hasPunches(r))) {
+                              existingMap[key] = r;
+                          }
                       });
                   }
               }
@@ -535,29 +574,13 @@ export default function App() {
                   manual_out_time: outTime,
                   id_number: group.idKey || (existing ? existing.id_number : null),
                   location_id: group.locationId || (existing ? existing.location_id : null),
-                  status: (existing && existing.status) ? existing.status : 'Present'
+                  status: (existing && existing.status && existing.status !== 'Absent') ? existing.status : 'Present'
               };
           });
 
-          // Inline helper to subtract 1 day from Date ISO (e.g. "2026-05-23" -> "2026-05-22")
-          const getPreviousDateISO = (dateStr: string): string => {
-              const parts = dateStr.split('-');
-              if (parts.length !== 3) return dateStr;
-              const [ystr, mstr, dstr] = parts;
-              const dateObj = new Date(parseInt(ystr, 10), parseInt(mstr, 10) - 1, parseInt(dstr, 10) - 1);
-              const y = dateObj.getFullYear();
-              const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-              const d = String(dateObj.getDate()).padStart(2, '0');
-              return `${y}-${m}-${d}`;
-          };
-
-          // Post-processing sanitation of early morning checkins:
-          // If any record in attendanceData has a sys_in_time between 12:00 AM and 06:00 AM (Day shift) or 08:00 AM (Night shift),
-          // it belongs to the previous day's shift as an out-time.
           const finalAttendanceMap: Record<string, any> = {};
           
-          // Seed with all fetched existing database records so mismatching duplicates from any previously uploaded date
-          // can be cleaned up automatically during any re-upload!
+          // Seed with all fetched existing database records
           Object.keys(existingMap).forEach((key) => {
               finalAttendanceMap[key] = { ...existingMap[key] };
           });
@@ -565,50 +588,6 @@ export default function App() {
           attendanceData.forEach((item: any) => {
               const key = `${item.employee_id}_${item.date_iso}`;
               finalAttendanceMap[key] = { ...item };
-          });
-
-          // Scan all entries for early morning check-ins and redirect them to the previous day as a check-out
-          Object.keys(finalAttendanceMap).forEach((key) => {
-              const item = finalAttendanceMap[key];
-              if (!item.sys_in_time) return;
-
-              const [hhStr] = item.sys_in_time.split(':');
-              const hh = parseInt(hhStr, 10);
-              const empShift = getEmployeeShift(item.employee_id);
-              const thresholdHour = empShift === 'Night' ? 8 : 6;
-
-              if (hh < thresholdHour) {
-                  const shiftTimeVal = item.sys_in_time;
-                  const prevDateIso = getPreviousDateISO(item.date_iso);
-                  const prevKey = `${item.employee_id}_${prevDateIso}`;
-
-                  if (finalAttendanceMap[prevKey]) {
-                      finalAttendanceMap[prevKey].sys_out_time = shiftTimeVal;
-                      finalAttendanceMap[prevKey].manual_out_time = shiftTimeVal;
-                      finalAttendanceMap[prevKey].status = finalAttendanceMap[prevKey].status === 'OffDay' ? 'OffDay' : 'Present';
-                  } else {
-                      const prevExisting = existingMap[prevKey];
-                      finalAttendanceMap[prevKey] = {
-                          ...(prevExisting || {}),
-                          employee_id: item.employee_id,
-                          date_iso: prevDateIso,
-                          sys_in_time: prevExisting ? prevExisting.sys_in_time : null,
-                          sys_out_time: shiftTimeVal,
-                          manual_in_time: prevExisting ? prevExisting.manual_in_time : null,
-                          manual_out_time: shiftTimeVal,
-                          id_number: item.id_number,
-                          location_id: item.location_id,
-                          status: (prevExisting && prevExisting.status) ? prevExisting.status : 'Present'
-                      };
-                  }
-
-                  // Clear current day's misplaced check-in/out times
-                  item.sys_in_time = null;
-                  item.sys_out_time = null;
-                  item.manual_in_time = null;
-                  item.manual_out_time = null;
-                  item.status = 'Absent';
-              }
           });
 
           const sanitizedAttendanceData = Object.values(finalAttendanceMap).filter((item: any) => {
@@ -1049,8 +1028,14 @@ export default function App() {
         {activeSection === 'employees' && <EmployeeSection employees={employees} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'locations' && <LocationSection locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees} locations={locations} viewMode={viewMode} onUpdateAttendance={async (r) => {
-            // First find existing to preserve live_location
-            const existing = attendance.find(a => a.no === String(r.empId).trim() && a.dateISO === r.date);
+            // First find existing to preserve live_location, handling legacy date formats
+            const { data: existingRecords } = await supabase
+                .from('attendance')
+                .select('*')
+                .eq('employee_id', String(r.empId).trim())
+                .in('date_iso', getPossibleDateFormats(r.date));
+                
+            const existing = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
             
             const { error } = await supabase.from('attendance').upsert([{ 
                 employee_id: String(r.empId).trim(), 

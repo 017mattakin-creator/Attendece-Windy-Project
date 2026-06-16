@@ -3,7 +3,7 @@ import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileSpreadsheet, FileText, MapPin } from 'lucide-react';
+import { FileSpreadsheet, FileText, MapPin, Search } from 'lucide-react';
 import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
 
 interface AttendanceRecord {
@@ -59,7 +59,12 @@ export default function AttendanceSection({ attendance, employees, locations, vi
             emp,
             record: record || { manualInTime: '', manualOutTime: '', sysInTime: '', sysOutTime: '', locationId: '', live_location: '', live_location_in: '', live_location_out: '', late_remark: '' }
         };
-    }).filter(item => filterEmp === '' || item.emp.id === filterEmp);
+    }).filter(item => {
+        if (filterEmp === '') return true;
+        const search = filterEmp.toLowerCase();
+        return String(item.emp.id).toLowerCase().includes(search) || 
+               item.emp.name.toLowerCase().includes(search);
+    });
 
     const renderData = [...rawRenderData].sort((a, b) => {
         const isStaffA = isStaffEmployee(a.emp);
@@ -199,9 +204,24 @@ export default function AttendanceSection({ attendance, employees, locations, vi
                 </div>
             </div>
             
-            <div className="flex gap-4 mb-6 bg-stone-50 p-4 rounded-md">
-                <input type="text" placeholder="Filter by ID" value={filterEmp} onChange={e => setFilterEmp(e.target.value)} className="border border-stone-200 rounded p-2 text-xs w-48" />
-                <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="border border-stone-200 rounded p-2 text-xs" />
+            <div className="flex flex-wrap items-end gap-4 mb-6 bg-stone-50 p-4 rounded-md">
+                <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
+                    <label className="text-[10px] uppercase font-bold text-stone-500">Search Staff (ID or Name)</label>
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" size={14} />
+                        <input 
+                            type="text" 
+                            placeholder="Type ID or Name..." 
+                            value={filterEmp} 
+                            onChange={e => setFilterEmp(e.target.value)} 
+                            className="w-full border border-stone-200 rounded p-2 pl-9 text-xs outline-none focus:ring-1 focus:ring-stone-400 bg-white" 
+                        />
+                    </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                    <label className="text-[10px] uppercase font-bold text-stone-500">Select Date</label>
+                    <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="border border-stone-200 rounded p-2 text-xs outline-none focus:ring-1 focus:ring-stone-400" />
+                </div>
             </div>
 
             {/* Table 1: Staff Attendance */}
@@ -332,6 +352,15 @@ function EditableRow({ item, date, locations, onSave, viewMode }: { item: any, d
                     disabled={viewMode !== 'admin'}
                     className={`border border-stone-200 rounded px-2 py-1.5 w-24 text-xs focus:ring-1 focus:ring-stone-400 outline-none transition-all ${viewMode !== 'admin' ? 'bg-stone-50 text-stone-400' : ''}`}
                 />
+            </td>
+            <td className="px-3 py-3">
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    (item.record.status === 'Absent' || !item.record.status) && !(item.record.manualInTime || item.record.sysInTime) 
+                        ? 'bg-red-50 text-red-600' 
+                        : 'bg-green-50 text-green-600'
+                }`}>
+                    {item.record.status === 'Manual' || item.record.status === 'Present' ? 'Present' : (item.record.status || ( (item.record.manualInTime || item.record.sysInTime) ? 'Present' : 'Absent'))}
+                </span>
             </td>
             <td className="px-3 py-3">
                 <select 
