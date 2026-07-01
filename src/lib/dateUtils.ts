@@ -234,7 +234,7 @@ export function parseCombinedDateTimeToLocal(dateTimeStr: string): Date | null {
   return parseDateTimeToLocal(dateStr, timeStr);
 }
 
-export function getShiftRelativeMinutes(timeStr: string, shift: 'Day' | 'Night' = 'Day'): number {
+export function getShiftRelativeMinutes(timeStr: string, shift: 'Day' | 'Night' = 'Day', locationId?: string, employeeId?: string): number {
   if (!timeStr) return 0;
   const parts = timeStr.split(':');
   const h = Number(parts[0]) || 0;
@@ -248,11 +248,38 @@ export function getShiftRelativeMinutes(timeStr: string, shift: 'Day' | 'Night' 
       return (h + 4) * 60 + m;
     }
   } else {
-    // Day shift starts at 08:00 AM
-    if (h >= 8) {
-      return (h - 8) * 60 + m;
+    // Day shift thresholds
+    let baseH = 8;
+    let baseM = 0;
+
+    const loc = String(locationId || '').trim();
+    const emp = String(employeeId || '').trim();
+
+    if (emp === '16153') {
+      // MD. GHULAM KEBRIA: 09:30 AM
+      baseH = 9;
+      baseM = 30;
+    } else if (loc === '101') {
+      // Location 101 (ETP): 08:10 AM
+      baseH = 8;
+      baseM = 10;
     } else {
-      return (h + 16) * 60 + m;
+      // Others: 09:15 AM
+      baseH = 9;
+      baseM = 15;
+    }
+
+    const currentTotalMinutes = h * 60 + m;
+    const baseTotalMinutes = baseH * 60 + baseM;
+
+    // If it's early morning (e.g., 5 AM), it's probably very early for the shift, 
+    // so we should handle the wrap-around if needed, but for Day shift 8/9 AM is normal.
+    if (h >= 5) {
+      return currentTotalMinutes - baseTotalMinutes;
+    } else {
+      // If it's before 5 AM, it might be late for a previous shift or very early for next.
+      // For simplicity in Day shift:
+      return (currentTotalMinutes + 24 * 60) - baseTotalMinutes;
     }
   }
 }

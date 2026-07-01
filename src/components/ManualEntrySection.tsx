@@ -397,11 +397,35 @@ export default function ManualEntrySection({
       if (parts.length === 2) {
         const h = Number(parts[0]);
         const m = Number(parts[1]);
-        const isLate = empShift === 'Night'
-          ? (h > 20 || (h === 20 && m > 15))
-          : (h > 9 || (h === 9 && m > 15));
+        
+        let thresholdH = 9;
+        let thresholdM = 15;
+        let lateTimeStr = "সকাল ০৯:১৫";
+
+        if (empShift === 'Night') {
+          thresholdH = 20;
+          thresholdM = 15;
+          lateTimeStr = "রাত ০৮:১৫";
+        } else {
+          const empId = String(selectedEmp.id).trim();
+          const loc = String(location || '').trim();
+
+          if (empId === '16153') {
+            thresholdH = 9;
+            thresholdM = 30;
+            lateTimeStr = "সকাল ০৯:৩০";
+          } else if (loc === '101') {
+            thresholdH = 8;
+            thresholdM = 10;
+            lateTimeStr = "সকাল ০৮:১০";
+          }
+        }
+
+        const currentMins = h * 60 + m;
+        const thresholdMins = thresholdH * 60 + thresholdM;
+        const isLate = currentMins > thresholdMins;
+
         if (isLate && !lateRemark.trim()) {
-          const lateTimeStr = empShift === 'Night' ? "রাত ০৮:১৫" : "সকাল ০৯:১৫";
           return alert(`দুঃখিত! আপনি ${lateTimeStr} এর পরে এসেছেন। \n\nদেরি হওয়ার কারণ (Comment/Late Remark) অবশ্যই লিখতে হবে, তা না হলে এন্ট্রি সেভ হবে না।`);
         }
       }

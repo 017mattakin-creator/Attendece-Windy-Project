@@ -14,6 +14,7 @@ import AttendanceSection from './components/AttendanceSection';
 import ComparisonSection from './components/ComparisonSection';
 import MonthlyReportSection from './components/MonthlyReportSection';
 import TimeCardSection from './components/TimeCardSection';
+import LateReportSection from './components/LateReportSection';
 import LocationSection from './components/LocationSection';
 import UploadSection from './components/UploadSection';
 import ManualEntrySection from './components/ManualEntrySection';
@@ -1075,6 +1076,7 @@ export default function App() {
         )}
         {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
+        {activeSection === 'late' && <LateReportSection employees={employees} locations={locations} />}
           </>
         )}
       </main>

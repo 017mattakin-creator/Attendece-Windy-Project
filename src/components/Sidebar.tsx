@@ -22,6 +22,7 @@ export default function Sidebar({ activeSection, setActiveSection, viewMode, isO
     ] : []),
     { id: 'monthly', name: 'Monthly Report', icon: Table },
     { id: 'timecard', name: 'Time Card', icon: Clock },
+    { id: 'late', name: 'Late Report', icon: Clock },
   ];
 
   const SidebarContent = (
