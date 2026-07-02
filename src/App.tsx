@@ -124,9 +124,10 @@ export default function App() {
       if (locError) console.error('Error fetching locations:', locError);
       else if (locData) setLocations(locData);
 
-      const { data: attData, error: attError } = await supabase.from('attendance').select('*, employees(name)').order('created_at', { ascending: false }).limit(25000);
-      if (attError) console.error('Error fetching attendance:', attError);
-      else if (attData) {
+      const { data: attData, error: attError } = await supabase.from('attendance').select('*, employees(name)').order('created_at', { ascending: false }).limit(60000);
+      if (attError) {
+        console.error('Error fetching attendance in App:', attError);
+      } else if (attData) {
         // Group by emp_id + normalized date to merge legacy and new format records
         const mergedMap: Record<string, any> = {};
         

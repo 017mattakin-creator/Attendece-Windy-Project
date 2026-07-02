@@ -164,9 +164,11 @@ export function parseDateTimeToLocal(dateStr: string, timeStr: string): Date | n
         day = part1;
         month = part2 - 1;
       } else {
-        // Both <= 12. Default to MM/DD/YYYY (monthly machine punches standard)
-        day = part2;
-        month = part1 - 1;
+        // Both <= 12. In the user's context (Bangladesh/Bengali), DD/MM/YYYY is standard.
+        // If it was MM/DD/YYYY, we'd have to know the source.
+        // We'll prefer DD/MM/YYYY as the default for ambiguous numeric strings.
+        day = part1;
+        month = part2 - 1;
       }
     }
     // 3. Check for YYYY-MM-DD or YYYY/MM/DD

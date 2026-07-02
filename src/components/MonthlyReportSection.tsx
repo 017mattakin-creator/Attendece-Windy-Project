@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FileSpreadsheet, FileText, Search } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, Search } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats } from '../lib/dateUtils';
+import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats, normalizeToYYYYMMDD } from '../lib/dateUtils';
 
 interface Props {
     employees: any[];
@@ -45,6 +45,79 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
     const [year, setYear] = useState(new Date().getFullYear());
     const [updating, setUpdating] = useState<string | null>(null);
     const [filterTerm, setFilterTerm] = useState('');
+    const [localAttendance, setLocalAttendance] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+
+    // Fetch all attendance for this month/year
+    React.useEffect(() => {
+        const fetchMonthData = async () => {
+            setIsLoading(true);
+            try {
+                const monthStr = String(month).padStart(2, '0');
+                const yearStr = String(year);
+                
+                // Fetch a substantial set of recent records to ensure current month data is present.
+                // We handle format normalization and filtering in JavaScript for maximum reliability.
+                const { data, error } = await supabase
+                    .from('attendance')
+                    .select('*, employees(name)')
+                    .order('created_at', { ascending: false })
+                    .limit(20000);
+                
+                if (error) {
+                    console.error('Supabase error fetching month attendance:', error);
+                    throw error;
+                }
+                if (data) {
+                    const mapped = data.map((a: any) => ({
+                        no: String(a.employee_id).trim(),
+                        name: a.employees?.name || 'Unknown',
+                        dateISO: normalizeToYYYYMMDD(a.date_iso || ''),
+                        sysInTime: a.sys_in_time || '',
+                        sysOutTime: a.sys_out_time || '',
+                        manualInTime: a.manual_in_time || '',
+                        manualOutTime: a.manual_out_time || '',
+                        status: a.status || 'Absent',
+                        locationId: a.location_id || '',
+                        late_remark: a.late_remark || '',
+                        live_location: a.live_location || '',
+                    }));
+
+                    const mergedMap: Record<string, any> = {};
+                    mapped.forEach(row => {
+                        const key = `${row.no}_${row.dateISO}`;
+                        if (!mergedMap[key]) {
+                            mergedMap[key] = row;
+                        } else {
+                            const existing = mergedMap[key];
+                            const hasPunches = (r: any) => !!(String(r.sysInTime || '').trim() || String(r.sysOutTime || '').trim() || String(r.manualInTime || '').trim() || String(r.manualOutTime || '').trim());
+                            if (!hasPunches(existing) && hasPunches(row)) {
+                                mergedMap[key] = { ...row, live_location: row.live_location || existing.live_location, late_remark: row.late_remark || existing.late_remark };
+                            } else {
+                                if (!existing.live_location) existing.live_location = row.live_location;
+                                if (!existing.late_remark) existing.late_remark = row.late_remark;
+                                if (existing.status === 'Absent' && row.status !== 'Absent') existing.status = row.status;
+                            }
+                        }
+                    });
+
+                    const filtered = Object.values(mergedMap).filter((a: any) => {
+                        if (!a.dateISO) return false;
+                        const [y, m] = a.dateISO.split('-').map(Number);
+                        return y === year && m === month;
+                    });
+
+                    setLocalAttendance(filtered);
+                }
+            } catch (err) {
+                console.error('Error fetching month attendance:', err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchMonthData();
+    }, [month, year, employees]);
 
     const daysInMonth = new Date(year, month, 0).getDate();
     const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
@@ -113,7 +186,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
             };
             days.forEach(d => {
                 const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
+                const record = localAttendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
                 const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(emp.id));
                 
                 let label = '';
@@ -152,7 +225,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
             const row = [emp.id, emp.name];
             days.forEach(d => {
                 const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
+                const record = localAttendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
                 const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(emp.id));
                 
                 let label = '';
@@ -188,7 +261,10 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
     return (
         <section className="bg-white p-8 rounded-lg shadow-sm border border-stone-100">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-            <h2 className="text-sm font-bold uppercase tracking-widest text-stone-800">Monthly Attendance Report</h2>
+            <div className="flex items-center gap-3">
+                <h2 className="text-sm font-bold uppercase tracking-widest text-stone-800">Monthly Attendance Report</h2>
+                {isLoading && <Loader2 className="animate-spin text-amber-600" size={16} />}
+            </div>
             <div className="flex gap-2">
                 <button 
                   onClick={exportToExcel}
@@ -255,7 +331,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
                             <td className="px-3 py-3 whitespace-nowrap sticky left-12 bg-white border-r border-stone-50">{emp.name}</td>
                             {days.map(d => {
                                 const dateISO = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-                                const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
+                                const record = localAttendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dateISO);
                                 const isFuture = dateISO > getTodayShiftDate(getEmployeeShift(emp.id));
                                 let currentStatus = record ? record.status : (isFuture ? '-' : 'Absent');
                                 

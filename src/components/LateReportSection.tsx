@@ -25,21 +25,53 @@ export default function LateReportSection({ employees, locations }: Props) {
   const fetchLateRecords = async () => {
     setIsLoading(true);
     try {
+      const monthStr = String(month).padStart(2, '0');
+      const yearStr = String(year);
+      
+      // Fetch a substantial set of recent records to ensure current and selected month data is captured.
+      // Filtering is then handled in JS to maintain reliability across various date formats.
       const { data, error } = await supabase
         .from('attendance')
-        .select('*');
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(15000); 
       
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase error fetching late records:', error);
+        throw error;
+      }
       
       if (data) {
-        // Filter for the selected month/year and late records
-        const filtered = data.filter(a => {
-          const normalized = normalizeToYYYYMMDD(a.date_iso || '');
-          if (!normalized) return false;
-          const [y, m] = normalized.split('-').map(Number);
+        // Process records - normalize dates and handle potential duplicates
+        const mapped = data.map((a: any) => ({
+          ...a,
+          dateISO: normalizeToYYYYMMDD(a.date_iso || '')
+        }));
+
+        // Merge logic to ensure only the best record per day is used
+        const mergedMap: Record<string, any> = {};
+        mapped.forEach(row => {
+          const key = `${row.employee_id}_${row.dateISO}`;
+          if (!mergedMap[key]) {
+            mergedMap[key] = row;
+          } else {
+            const existing = mergedMap[key];
+            const hasPunches = (r: any) => !!(String(r.sys_in_time || '').trim() || String(r.sys_out_time || '').trim() || String(r.manual_in_time || '').trim() || String(r.manual_out_time || '').trim());
+            
+            if (!hasPunches(existing) && hasPunches(row)) {
+              mergedMap[key] = row;
+            }
+          }
+        });
+
+        // Filter strictly for selected month/year
+        const finalRecords = Object.values(mergedMap).filter((a: any) => {
+          if (!a.dateISO) return false;
+          const [y, m] = a.dateISO.split('-').map(Number);
           return y === year && m === month;
         });
-        setAttendanceRecords(filtered);
+
+        setAttendanceRecords(finalRecords);
       }
     } catch (err) {
       console.error('Error fetching late records:', err);
