@@ -130,7 +130,7 @@ export function parseDateTimeToLocal(dateStr: string, timeStr: string): Date | n
   const tStr = timeStr.trim();
   
   // 1. Check for DD-MMM-YY or DD-MMM-YYYY (e.g., 20-May-2026, 20-May-26)
-  const dmyMatch = dStr.match(/^(\d{1,2})[-/]([A-Za-z]{3})[-/](\d{2,4})$/i);
+  const dmyMatch = dStr.match(/^(\d{1,2})[-/.]\s*([A-Za-z]{3})\s*[-/.]\s*(\d{2,4})$/i);
   if (dmyMatch) {
     day = parseInt(dmyMatch[1], 10);
     const monthMap: Record<string, number> = {
@@ -146,7 +146,7 @@ export function parseDateTimeToLocal(dateStr: string, timeStr: string): Date | n
   } 
   // 2. Check for DD-MM-YYYY or MM-DD-YYYY or DD/MM/YYYY or MM/DD/YYYY
   else {
-    const dmyNumericMatch = dStr.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+    const dmyNumericMatch = dStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
     if (dmyNumericMatch) {
       const part1 = parseInt(dmyNumericMatch[1], 10);
       const part2 = parseInt(dmyNumericMatch[2], 10);
@@ -164,16 +164,15 @@ export function parseDateTimeToLocal(dateStr: string, timeStr: string): Date | n
         day = part1;
         month = part2 - 1;
       } else {
-        // Both <= 12. In the user's context (Bangladesh/Bengali), DD/MM/YYYY is standard.
-        // If it was MM/DD/YYYY, we'd have to know the source.
-        // We'll prefer DD/MM/YYYY as the default for ambiguous numeric strings.
-        day = part1;
-        month = part2 - 1;
+        // Both <= 12. Default to MM/DD/YYYY (biometric machine standard)
+        // If the user's system uses DD/MM/YYYY, we can try to detect it if one part > 12 elsewhere
+        day = part2;
+        month = part1 - 1;
       }
     }
     // 3. Check for YYYY-MM-DD or YYYY/MM/DD
     else {
-      const ymdMatch = dStr.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+      const ymdMatch = dStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
       if (ymdMatch) {
         year = parseInt(ymdMatch[1], 10);
         month = parseInt(ymdMatch[2], 10) - 1;
@@ -223,17 +222,19 @@ export function normalizeToYYYYMMDD(dateStr: string): string {
 
 export function parseCombinedDateTimeToLocal(dateTimeStr: string): Date | null {
   if (!dateTimeStr) return null;
-  const trimmed = dateTimeStr.trim();
+  const trimmed = dateTimeStr.trim().replace(/\s+/g, ' ');
   
-  const spaceIdx = trimmed.search(/[\sT]/);
-  let dateStr = trimmed;
-  let timeStr = '';
-  if (spaceIdx !== -1) {
-    dateStr = trimmed.substring(0, spaceIdx);
-    timeStr = trimmed.substring(spaceIdx + 1);
+  // Try splitting by space or 'T' (ISO format)
+  const parts = trimmed.split(/[\sT]/);
+  if (parts.length >= 2) {
+    // Usually the first part is date, second is time
+    // But sometimes it might be "20-May-2024 10:30 PM" -> ["20-May-2024", "10:30", "PM"]
+    const dateStr = parts[0];
+    const timeStr = parts.slice(1).join(' ');
+    return parseDateTimeToLocal(dateStr, timeStr);
   }
   
-  return parseDateTimeToLocal(dateStr, timeStr);
+  return parseDateTimeToLocal(trimmed, '');
 }
 
 export function getShiftRelativeMinutes(timeStr: string, shift: 'Day' | 'Night' = 'Day', locationId?: string, employeeId?: string): number {
