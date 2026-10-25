@@ -4,7 +4,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { FileSpreadsheet, FileText, Loader2, MapPin, Search } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats, normalizeToYYYYMMDD } from '../lib/dateUtils';
+import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats, normalizeToYYYYMMDD, isEmployeeActive } from '../lib/dateUtils';
 
 interface Props {
     employees: any[];
@@ -396,6 +396,7 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
                             </div>
                             <div className="overflow-y-auto">
                                 {employees
+                                    .filter(isEmployeeActive)
                                     .filter(e => 
                                         String(e.id).toLowerCase().includes(searchTerm.toLowerCase()) || 
                                         e.name.toLowerCase().includes(searchTerm.toLowerCase())

@@ -296,6 +296,13 @@ export function isEmployeeActive(emp: any): boolean {
   if (name.includes('JUBAIR BIN AHMED')) return false;
   const status = String(emp.status || '').toLowerCase().trim();
   if (status === 'resigned' || status === 'inactive' || status === 'left') return false;
+  const education = String(emp.education || '').toLowerCase();
+  if (education.includes('resigned') || education.includes('inactive')) return false;
+  if (id) {
+    const localStatus = localStorage.getItem(`emp_status_${id}`);
+    if (localStatus === 'resigned' || localStatus === 'inactive') return false;
+  }
   return true;
 }
+
 

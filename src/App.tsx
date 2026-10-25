@@ -21,7 +21,7 @@ import LocationSection from './components/LocationSection';
 import UploadSection from './components/UploadSection';
 import ManualEntrySection from './components/ManualEntrySection';
 import LiveLocationMap from './components/LiveLocationMap';
-import { getTodayShiftDate, formatSystemDate, getEmployeeShift, getShiftDateForTime, parseCombinedDateTimeToLocal, getShiftRelativeMinutes, cacheDbShift, parseEducationAndShift, normalizeToYYYYMMDD, getPossibleDateFormats } from './lib/dateUtils';
+import { getTodayShiftDate, formatSystemDate, getEmployeeShift, getShiftDateForTime, parseCombinedDateTimeToLocal, getShiftRelativeMinutes, cacheDbShift, parseEducationAndShift, normalizeToYYYYMMDD, getPossibleDateFormats, isEmployeeActive } from './lib/dateUtils';
 
 interface AttendanceRecord {
   name: string;
@@ -50,10 +50,11 @@ interface Employee {
   salary: string;
   joinDate: string;
   phoneNumber: string;
+  status?: string;
 }
 
 export const STAFF_IDS = [
-  '16153', '15439', '16325', '15524', '16135', '16117', '15525', '15641', '16254', '15608', '16279', 
+  '16153', '15439', '16325', '15524', '16135', '16117', '15525', '16254', '15608', '16279', 
   '15590', '15832', '16187', '15548', '16110', '16004', '16114', '16270', '16099', '16193', '16009', '15973', '16156'
 ];
 
@@ -111,12 +112,15 @@ export default function App() {
           }
           
           cacheDbShift(empId, finalShift);
+          const isKnownInactive = empId === '15641' || empId === '15895' || String(e.name || '').toUpperCase().includes('JUBAIR BIN AHMED');
+          const finalStatus = e.status || (isKnownInactive ? 'Resigned' : 'Active');
           return {
             ...e,
             id: empId,
             education: education,
             joinDate: e.join_date || e.joinDate || '',
-            phoneNumber: e.phone_number || e.phoneNumber || ''
+            phoneNumber: e.phone_number || e.phoneNumber || '',
+            status: finalStatus
           };
         });
         setEmployees(normalized as Employee[]);
@@ -555,7 +559,11 @@ export default function App() {
     }
   };
 
-  const renderMetricsGrid = () => (
+  const renderMetricsGrid = () => {
+    const activeStaff = employees.filter(isEmployeeActive).filter(isStaffEmployee);
+    const activeSecurity = employees.filter(isEmployeeActive).filter(isSecurityEmployee);
+
+    return (
     <div className="pt-4 border-t border-stone-200">
       <h4 className="text-[10px] font-extrabold uppercase tracking-widest text-stone-400 mb-4 font-mono">Present Status Summary / বর্তমান পরিসংখ্যান</h4>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -577,7 +585,7 @@ export default function App() {
             <div className="flex flex-col">
               <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
               <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
-                {employees.filter(isStaffEmployee).length}
+                {activeStaff.length}
               </span>
             </div>
             <button 
@@ -587,7 +595,7 @@ export default function App() {
               <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
               <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
                 {(() => {
-                  return employees.filter(isStaffEmployee).filter(emp => {
+                  return activeStaff.filter(emp => {
                     const shift = getEmployeeShift(emp.id);
                     const targetDate = getTodayShiftDate(shift);
                     return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
@@ -602,13 +610,12 @@ export default function App() {
               <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
               <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
                 {(() => {
-                  const staffList = employees.filter(isStaffEmployee);
-                  const presentCount = staffList.filter(emp => {
+                  const presentCount = activeStaff.filter(emp => {
                     const shift = getEmployeeShift(emp.id);
                     const targetDate = getTodayShiftDate(shift);
                     return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
                   }).length;
-                  return Math.max(0, staffList.length - presentCount);
+                  return Math.max(0, activeStaff.length - presentCount);
                 })()}
               </span>
             </button>
@@ -633,7 +640,7 @@ export default function App() {
             <div className="flex flex-col">
               <span className="text-[9px] uppercase font-bold text-stone-400 tracking-wider">Total</span>
               <span className="text-xl md:text-2xl font-serif italic text-stone-900 mt-1 font-bold">
-                {employees.filter(isSecurityEmployee).length}
+                {activeSecurity.length}
               </span>
             </div>
             <button 
@@ -643,7 +650,7 @@ export default function App() {
               <span className="text-[9px] uppercase font-bold text-green-600 tracking-wider group-hover:underline">Present</span>
               <span className="text-xl md:text-2xl font-serif italic text-green-700 mt-1 font-bold">
                 {(() => {
-                  return employees.filter(isSecurityEmployee).filter(emp => {
+                  return activeSecurity.filter(emp => {
                     const shift = getEmployeeShift(emp.id);
                     const targetDate = getTodayShiftDate(shift);
                     return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
@@ -658,13 +665,12 @@ export default function App() {
               <span className="text-[9px] uppercase font-bold text-red-500 tracking-wider group-hover:underline">Absent</span>
               <span className="text-xl md:text-2xl font-serif italic text-red-600 mt-1 font-bold">
                 {(() => {
-                  const securityList = employees.filter(isSecurityEmployee);
-                  const presentCount = securityList.filter(emp => {
+                  const presentCount = activeSecurity.filter(emp => {
                     const shift = getEmployeeShift(emp.id);
                     const targetDate = getTodayShiftDate(shift);
                     return attendance.some(a => a.no === emp.id && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
                   }).length;
-                  return Math.max(0, securityList.length - presentCount);
+                  return Math.max(0, activeSecurity.length - presentCount);
                 })()}
               </span>
             </button>
@@ -697,6 +703,7 @@ export default function App() {
       </div>
     </div>
   );
+};
 
   return (
       <div className="flex bg-stone-100 min-h-screen relative overflow-x-hidden">
@@ -794,13 +801,14 @@ export default function App() {
                         return attendance.some(a => a.no === empId && a.dateISO === targetDate && (a.status === 'Present' || a.status === 'Manual'));
                       };
                       
+                      const activeEmployees = employees.filter(isEmployeeActive);
                       const list = (() => {
-                        if (showList === 'present-staff') return employees.filter(isStaffEmployee).filter(e => isEmpPresent(e.id));
-                        if (showList === 'absent-staff') return employees.filter(isStaffEmployee).filter(e => !isEmpPresent(e.id));
-                        if (showList === 'present-security') return employees.filter(isSecurityEmployee).filter(e => isEmpPresent(e.id));
-                        if (showList === 'absent-security') return employees.filter(isSecurityEmployee).filter(e => !isEmpPresent(e.id));
-                        if (showList === 'present') return employees.filter(e => isEmpPresent(e.id));
-                        return employees.filter(e => !isEmpPresent(e.id));
+                        if (showList === 'present-staff') return activeEmployees.filter(isStaffEmployee).filter(e => isEmpPresent(e.id));
+                        if (showList === 'absent-staff') return activeEmployees.filter(isStaffEmployee).filter(e => !isEmpPresent(e.id));
+                        if (showList === 'present-security') return activeEmployees.filter(isSecurityEmployee).filter(e => isEmpPresent(e.id));
+                        if (showList === 'absent-security') return activeEmployees.filter(isSecurityEmployee).filter(e => !isEmpPresent(e.id));
+                        if (showList === 'present') return activeEmployees.filter(e => isEmpPresent(e.id));
+                        return activeEmployees.filter(e => !isEmpPresent(e.id));
                       })();
 
                       if (list.length === 0) {
@@ -893,7 +901,7 @@ export default function App() {
 
                 {/* Manual/Auto Attendance Entry Form */}
                 <ManualEntrySection 
-                  employees={employees} 
+                  employees={employees.filter(isEmployeeActive)} 
                   locations={locations} 
                   onRefresh={fetchData} 
                   viewMode={viewMode} 
@@ -927,7 +935,7 @@ export default function App() {
             )}
         {activeSection === 'employees' && <EmployeeSection employees={employees} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'locations' && <LocationSection locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
-        {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees} locations={locations} viewMode={viewMode} onUpdateAttendance={async (r) => {
+        {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees.filter(isEmployeeActive)} locations={locations} viewMode={viewMode} onUpdateAttendance={async (r) => {
             // First find existing to preserve live_location, handling legacy date formats
             const { data: existingRecords } = await supabase
                 .from('attendance')
@@ -964,7 +972,7 @@ export default function App() {
         {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} progress={uploadProgress} />}
         {activeSection === 'comparison' && viewMode === 'admin' && (
           <ComparisonSection 
-            employees={employees} 
+            employees={employees.filter(isEmployeeActive)} 
             attendance={attendance} 
             locations={locations} 
             onEmployeeClick={(empId) => {
@@ -973,10 +981,10 @@ export default function App() {
             }}
           />
         )}
-        {activeSection === 'monthly' && <MonthlyReportSection employees={employees} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
-        {activeSection === 'timecard' && <TimeCardSection employees={employees} attendance={attendance} locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
-        {activeSection === 'late' && <LateReportSection employees={employees} locations={locations} />}
-        {activeSection === 'overtime' && <OvertimeSection employees={employees} locations={locations} />}
+        {activeSection === 'monthly' && <MonthlyReportSection employees={employees.filter(isEmployeeActive)} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
+        {activeSection === 'timecard' && <TimeCardSection employees={employees.filter(isEmployeeActive)} attendance={attendance} locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
+        {activeSection === 'late' && <LateReportSection employees={employees.filter(isEmployeeActive)} locations={locations} />}
+        {activeSection === 'overtime' && <OvertimeSection employees={employees.filter(isEmployeeActive)} locations={locations} />}
           </>
         )}
       </main>

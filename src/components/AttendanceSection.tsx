@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { FileSpreadsheet, FileText, MapPin, Search } from 'lucide-react';
-import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
+import { getTodayShiftDate, getEmployeeShift, isEmployeeActive } from '../lib/dateUtils';
 
 interface AttendanceRecord {
   name: string;
@@ -33,7 +33,7 @@ interface Props {
 }
 
 const STAFF_IDS = [
-  '16153', '15439', '16325', '15524', '16135', '16117', '15525', '15641', '16254', '15608', '16279', 
+  '16153', '15439', '16325', '15524', '16135', '16117', '15525', '16254', '15608', '16279', 
   '15590', '15832', '16187', '15548', '16110', '16004', '16114', '16270', '16099', '16193', '16009', '15973', '16156'
 ];
 
@@ -52,8 +52,8 @@ export default function AttendanceSection({ attendance, employees, locations, vi
     const [filterEmp, setFilterEmp] = useState('');
     const [filterDate, setFilterDate] = useState(getTodayShiftDate());
     
-    // Create matrix view
-    const rawRenderData = employees.map(emp => {
+    // Create matrix view for active employees only
+    const rawRenderData = employees.filter(isEmployeeActive).map(emp => {
         const record = attendance.find(a => String(a.no).trim() === String(emp.id).trim() && a.dateISO === filterDate);
         return {
             emp,

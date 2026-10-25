@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Timer, FileText, FileSpreadsheet, Loader2, Coffee, Moon, X } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { normalizeToYYYYMMDD, getEmployeeShift } from '../lib/dateUtils';
+import { normalizeToYYYYMMDD, getEmployeeShift, isEmployeeActive } from '../lib/dateUtils';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -84,7 +84,7 @@ export default function OvertimeSection({ employees, locations }: Props) {
     };
   };
 
-  const overtimeData = employees.map(emp => {
+  const overtimeData = employees.filter(isEmployeeActive).map(emp => {
     const empRecords = attendanceRecords.filter(a => String(a.employee_id).trim() === String(emp.id).trim());
     const allowances = empRecords.map(r => ({
       ...r,

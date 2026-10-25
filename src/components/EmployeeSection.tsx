@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { Sun, Moon, Pencil, Trash2, Check, X } from 'lucide-react';
-import { getEmployeeShift, setEmployeeShift, parseEducationAndShift } from '../lib/dateUtils';
+import { Sun, Moon, Pencil, Trash2, Check, X, UserX, UserCheck } from 'lucide-react';
+import { getEmployeeShift, setEmployeeShift, parseEducationAndShift, isEmployeeActive } from '../lib/dateUtils';
 
 interface Employee {
   id: string;
@@ -12,6 +12,7 @@ interface Employee {
   salary: string;
   joinDate: string;
   phoneNumber: string;
+  status?: string;
 }
 
 interface Props {
@@ -26,9 +27,10 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
     const [renderTrigger, setRenderTrigger] = useState(0);
     const [statusMsg, setStatusMsg] = useState<string | null>(null);
     const [categoryFilter, setCategoryFilter] = useState<'all' | 'staff' | 'security'>('all');
+    const [showInactive, setShowInactive] = useState(false);
 
     const STAFF_IDS = [
-      '16153', '15439', '16325', '15524', '16135', '16117', '15525', '15641', '16254', '15608', '16279', 
+      '16153', '15439', '16325', '15524', '16135', '16117', '15525', '16254', '15608', '16279', 
       '15590', '15832', '16187', '15548', '16110', '16004', '16114', '16270', '16099', '16193', '16009', '15973', '16156'
     ];
 
@@ -43,7 +45,12 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
       return true;
     };
 
-    const filteredEmployees = employees.filter(emp => {
+    const activeList = employees.filter(isEmployeeActive);
+    const inactiveList = employees.filter(e => !isEmployeeActive(e));
+
+    const sourceList = showInactive ? inactiveList : activeList;
+
+    const filteredEmployees = sourceList.filter(emp => {
       if (categoryFilter === 'staff') return isStaffEmployee(emp);
       if (categoryFilter === 'security') return !isStaffEmployee(emp);
       return true;
@@ -144,6 +151,23 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
         }
     };
 
+    const handleToggleStatus = async (empId: string, empName: string, isCurrentlyActive: boolean) => {
+        const newStatus = isCurrentlyActive ? 'Resigned' : 'Active';
+        if (!confirm(`Are you sure you want to mark ${empName} (ID: ${empId}) as ${newStatus}?`)) return;
+
+        localStorage.setItem(`emp_status_${empId}`, newStatus.toLowerCase());
+        
+        try {
+            await supabase.from('employees').update({ status: newStatus }).eq('id', empId);
+        } catch (e) {
+            console.error('Failed to update status column in DB:', e);
+        }
+
+        setStatusMsg(`Status for ${empName} updated to "${newStatus}"`);
+        setTimeout(() => setStatusMsg(null), 3000);
+        onRefresh();
+    };
+
     const handleShiftChange = async (empId: string, shift: 'Day' | 'Night') => {
         const emp = employees.find(e => e.id === empId);
         if (!emp) return;
@@ -225,30 +249,47 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
                 </div>
             )}
 
-            {/* Category Directory Filter Tabs */}
-            <div className="flex flex-wrap gap-2 mb-4">
-                <button 
-                    onClick={() => setCategoryFilter('all')}
-                    className={`px-4 py-2 text-xs font-bold uppercase rounded-sm border transition-all ${categoryFilter === 'all' ? 'bg-stone-800 border-stone-800 text-white shadow-xs' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
-                >
-                    All Employees ({employees.length})
-                </button>
-                <button 
-                    onClick={() => setCategoryFilter('staff')}
-                    className={`px-4 py-2 text-xs font-bold uppercase rounded-sm border transition-all ${categoryFilter === 'staff' ? 'bg-amber-500 border-amber-500 text-white shadow-xs' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
-                >
-                    Staff Directory ({employees.filter(isStaffEmployee).length})
-                </button>
-                <button 
-                    onClick={() => setCategoryFilter('security')}
-                    className={`px-4 py-2 text-xs font-bold uppercase rounded-sm border transition-all ${categoryFilter === 'security' ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
-                >
-                    Security Directory ({employees.filter(emp => !isStaffEmployee(emp)).length})
-                </button>
+            {/* Category Directory Filter Tabs & Inactive Toggle */}
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div className="flex flex-wrap gap-2">
+                    <button 
+                        onClick={() => setCategoryFilter('all')}
+                        className={`px-3 py-1.5 text-xs font-bold uppercase rounded-sm border transition-all ${categoryFilter === 'all' ? 'bg-stone-800 border-stone-800 text-white shadow-xs' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
+                    >
+                        {showInactive ? 'All Resigned' : 'All Active'} ({sourceList.length})
+                    </button>
+                    <button 
+                        onClick={() => setCategoryFilter('staff')}
+                        className={`px-3 py-1.5 text-xs font-bold uppercase rounded-sm border transition-all ${categoryFilter === 'staff' ? 'bg-amber-500 border-amber-500 text-white shadow-xs' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
+                    >
+                        Staff ({sourceList.filter(isStaffEmployee).length})
+                    </button>
+                    <button 
+                        onClick={() => setCategoryFilter('security')}
+                        className={`px-3 py-1.5 text-xs font-bold uppercase rounded-sm border transition-all ${categoryFilter === 'security' ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs' : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'}`}
+                    >
+                        Security ({sourceList.filter(emp => !isStaffEmployee(emp)).length})
+                    </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setShowInactive(!showInactive)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold uppercase rounded-sm border transition-all cursor-pointer ${
+                            showInactive 
+                                ? 'bg-red-700 text-white border-red-700 shadow-sm' 
+                                : 'bg-stone-50 text-stone-600 border-stone-300 hover:bg-stone-100'
+                        }`}
+                        title="Toggle to view or hide inactive/resigned employees"
+                    >
+                        <UserX size={14} />
+                        <span>{showInactive ? 'Hide Resigned / Inactive' : 'Show Resigned / Inactive'} ({inactiveList.length})</span>
+                    </button>
+                </div>
             </div>
 
             <div className="overflow-x-auto border border-stone-200 rounded-sm">
-                <table className="w-full text-xs text-left text-stone-800 min-w-[700px]">
+                <table className="w-full text-xs text-left text-stone-800 min-w-[750px]">
                     <thead className="text-[10px] text-stone-600 uppercase bg-stone-50 border-b border-stone-200">
                         <tr>
                             <th className="px-3 py-3 w-16">ID</th>
@@ -257,8 +298,9 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
                             <th className="px-3 py-3">Category</th>
                             <th className="px-3 py-3">Join Date</th>
                             <th className="px-3 py-3">Phone Number</th>
+                            <th className="px-3 py-3 w-20">Status</th>
                             <th className="px-3 py-3 w-36">Shift / শিফট</th>
-                            {viewMode === 'admin' && <th className="px-3 py-3 w-28 text-right">Actions</th>}
+                            {viewMode === 'admin' && <th className="px-3 py-3 w-32 text-right">Actions</th>}
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-200">
@@ -337,6 +379,15 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
                                         )}
                                     </td>
 
+                                    {/* Status Column */}
+                                    <td className="px-3 py-2">
+                                        {isEmployeeActive(emp) ? (
+                                            <span className="bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase">Active</span>
+                                        ) : (
+                                            <span className="bg-red-100 text-red-800 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase">Resigned</span>
+                                        )}
+                                    </td>
+
                                     {/* Shift Selection Column */}
                                     <td className="px-3 py-2">
                                         <select 
@@ -377,16 +428,25 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
                                             ) : (
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     <button 
+                                                        onClick={() => handleToggleStatus(emp.id, emp.name, isEmployeeActive(emp))} 
+                                                        title={isEmployeeActive(emp) ? "Mark as Resigned (Remove from attendance & reports)" : "Reactivate Employee"} 
+                                                        className={`p-1 rounded transition-all active:scale-90 cursor-pointer ${
+                                                            isEmployeeActive(emp) ? 'text-stone-400 hover:text-amber-700 hover:bg-amber-50' : 'text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50'
+                                                        }`}
+                                                    >
+                                                        {isEmployeeActive(emp) ? <UserX size={15} /> : <UserCheck size={15} />}
+                                                    </button>
+                                                    <button 
                                                         onClick={() => startEditing(emp)} 
                                                         title="Edit Employee" 
-                                                        className="p-1 text-stone-600 hover:bg-stone-100 rounded transition-all active:scale-90"
+                                                        className="p-1 text-stone-600 hover:bg-stone-100 rounded transition-all active:scale-90 cursor-pointer"
                                                     >
                                                         <Pencil size={15} />
                                                     </button>
                                                     <button 
                                                         onClick={() => handleDeleteEmployee(emp.id, emp.name)} 
                                                         title="Delete Employee" 
-                                                        className="p-1 text-[#e15252] hover:bg-red-50 rounded transition-all active:scale-90"
+                                                        className="p-1 text-[#e15252] hover:bg-red-50 rounded transition-all active:scale-90 cursor-pointer"
                                                     >
                                                         <Trash2 size={15} />
                                                     </button>

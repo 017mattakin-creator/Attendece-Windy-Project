@@ -4,7 +4,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { FileSpreadsheet, FileText, Loader2, Search } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats, normalizeToYYYYMMDD } from '../lib/dateUtils';
+import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats, normalizeToYYYYMMDD, isEmployeeActive } from '../lib/dateUtils';
 
 interface Props {
     employees: any[];
@@ -25,7 +25,7 @@ const STATUS_OPTIONS = [
 ];
 
 const STAFF_IDS = [
-  '16153', '15439', '16325', '15524', '16135', '16117', '15525', '15641', '16254', '15608', '16279', 
+  '16153', '15439', '16325', '15524', '16135', '16117', '15525', '16254', '15608', '16279', 
   '15590', '15832', '16187', '15548', '16110', '16004', '16114', '16270', '16099', '16193', '16009', '15973', '16156'
 ];
 
@@ -124,7 +124,7 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
 
     const todayISO = getTodayShiftDate();
 
-    const sortedEmployees = [...employees].sort((a, b) => {
+    const sortedEmployees = [...employees].filter(isEmployeeActive).sort((a, b) => {
         const isStaffA = isStaffEmployee(a);
         const isStaffB = isStaffEmployee(b);
         if (isStaffA && !isStaffB) return -1;

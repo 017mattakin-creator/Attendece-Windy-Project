@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { FileSpreadsheet, Search, Calendar, MapPin, FileDown } from 'lucide-react';
-import { getTodayShiftDate, getEmployeeShift } from '../lib/dateUtils';
+import { getTodayShiftDate, getEmployeeShift, isEmployeeActive } from '../lib/dateUtils';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -244,8 +244,10 @@ export default function ComparisonSection({ employees, attendance, locations = [
         { id: '16156', name: 'MD. SAMSUL ALAM', category: 'JR.STAFF' }
     ];
 
-    // Build the executive list corresponding exactly to the 24 requested staff sequence
-    const mappedEmployees = TARGET_PEOPLE.map(target => {
+    // Build the executive list corresponding to the requested staff sequence, excluding inactive/resigned IDs
+    const mappedEmployees = TARGET_PEOPLE
+        .filter(target => isEmployeeActive({ id: target.id, name: target.name }))
+        .map(target => {
         const dbEmp = employees.find(e => String(e.id).trim() === target.id);
         if (dbEmp) {
             return {
@@ -642,8 +644,9 @@ export default function ComparisonSection({ employees, attendance, locations = [
                     // Keep base textColor black
                     data.cell.styles.textColor = [0, 0, 0];
 
-                    // Grid border colors: SL 1-11 has coral/red, SL 12-24 has green
-                    if (empIndex < 11) {
+                    // Grid border colors: SR.STAFF has coral/red, JR.STAFF has green
+                    const targetEmp = sortedEmployees[empIndex];
+                    if (targetEmp?.category === 'SR.STAFF') {
                         data.cell.styles.lineColor = [255, 148, 148]; // Coral/Red #ff9494
                         data.cell.styles.lineWidth = 0.15;
                     } else {

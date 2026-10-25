@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Search } from 'lucide-react';
+import { isEmployeeActive } from '../lib/dateUtils';
 
 interface Employee {
   id: string;
@@ -10,6 +11,7 @@ interface Employee {
   salary: string;
   joinDate: string;
   phoneNumber: string;
+  status?: string;
 }
 
 interface Props {
@@ -21,10 +23,12 @@ interface Props {
 export default function EmployeeSelectorModal({ employees, onSelect, onClose }: Props) {
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredEmployees = employees.filter(e => 
-    e.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    e.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredEmployees = employees
+    .filter(isEmployeeActive)
+    .filter(e => 
+      e.id.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      e.name.toLowerCase().includes(searchTerm.toLowerCase())
+    );
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Clock, FileText, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { getEmployeeShift, normalizeToYYYYMMDD, getShiftRelativeMinutes } from '../lib/dateUtils';
+import { getEmployeeShift, normalizeToYYYYMMDD, getShiftRelativeMinutes, isEmployeeActive } from '../lib/dateUtils';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -95,7 +95,7 @@ export default function LateReportSection({ employees, locations }: Props) {
     };
   };
 
-  const lateData = employees.map(emp => {
+  const lateData = employees.filter(isEmployeeActive).map(emp => {
     const empRecords = attendanceRecords.filter(a => String(a.employee_id).trim() === String(emp.id).trim());
     const lateOccurrences = empRecords
       .map(r => ({ ...r, late: getLateInfo(r) }))
