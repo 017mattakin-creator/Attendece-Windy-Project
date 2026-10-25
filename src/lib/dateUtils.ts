@@ -286,3 +286,16 @@ export function getShiftRelativeMinutes(timeStr: string, shift: 'Day' | 'Night' 
     }
   }
 }
+
+export function isEmployeeActive(emp: any): boolean {
+  if (!emp) return false;
+  const id = String(emp.id || emp.no || '').trim();
+  // Jubair Bin Ahmed resigned (ID 15641 / 15895)
+  if (id === '15641' || id === '15895') return false;
+  const name = String(emp.name || '').toUpperCase();
+  if (name.includes('JUBAIR BIN AHMED')) return false;
+  const status = String(emp.status || '').toLowerCase().trim();
+  if (status === 'resigned' || status === 'inactive' || status === 'left') return false;
+  return true;
+}
+
