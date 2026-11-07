@@ -157,12 +157,24 @@ export default function MonthlyReportSection({ employees, attendance, onRefresh,
             
             const existing = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
 
-            const { error } = await supabase.from('attendance').upsert([{
-                ...(existing || {}),
-                employee_id: empId,
-                date_iso: dateISO,
+            const cleanDate = normalizeToYYYYMMDD(dateISO);
+            const payload: any = {
+                employee_id: String(empId).trim(),
+                date_iso: cleanDate,
                 status: newStatus,
-            }], { onConflict: 'employee_id,date_iso' });
+                sys_in_time: existing?.sys_in_time || null,
+                sys_out_time: existing?.sys_out_time || null,
+                manual_in_time: existing?.manual_in_time || null,
+                manual_out_time: existing?.manual_out_time || null,
+                id_number: existing?.id_number || String(empId).trim(),
+                location_id: existing?.location_id || null,
+                live_location: existing?.live_location || null,
+                live_location_in: existing?.live_location_in || null,
+                live_location_out: existing?.live_location_out || null,
+                late_remark: existing?.late_remark || null
+            };
+
+            const { error } = await supabase.from('attendance').upsert([payload], { onConflict: 'employee_id,date_iso' });
 
             if (error) {
                 alert('Update failed: ' + error.message);

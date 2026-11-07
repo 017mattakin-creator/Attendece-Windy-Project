@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import EmployeeSelectorModal from './EmployeeSelectorModal';
 import { UserPlus, Calendar, Clock, MapPin, Save, CheckCircle2, AlertCircle, ExternalLink, HelpCircle, Compass, ShieldAlert, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats } from '../lib/dateUtils';
+import { getTodayShiftDate, getEmployeeShift, getPossibleDateFormats, normalizeToYYYYMMDD } from '../lib/dateUtils';
 
 interface Employee {
   id: string;
@@ -455,13 +455,19 @@ export default function ManualEntrySection({
       const locInStr = finalLocIn ? JSON.stringify(finalLocIn) : null;
       const locOutStr = finalLocOut ? JSON.stringify(finalLocOut) : null;
 
+      let validLocationId: string | null = null;
+      if (location) {
+        const found = locations.find(l => l.id === location || l.name.toLowerCase() === location.toLowerCase());
+        if (found) validLocationId = found.id;
+      }
+
       const payload: any = {
         employee_id: String(selectedEmp.id).trim(),
         id_number: String(selectedEmp.id).trim(), 
-        date_iso: captureDate,
+        date_iso: normalizeToYYYYMMDD(captureDate),
         manual_in_time: inTime || null,
         manual_out_time: outTime || null,
-        location_id: location || null,
+        location_id: validLocationId,
         status: 'Manual',
         late_remark: lateRemark || null,
         live_location_in: locInStr,

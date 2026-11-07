@@ -213,27 +213,45 @@ export default function TimeCardSection({ employees, attendance, locations, onRe
             
             const existing = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
 
+            const cleanDate = normalizeToYYYYMMDD(dateISO);
+            let validLocId = existing?.location_id || null;
+            if (field === 'location') {
+              validLocId = newValue ? String(newValue).trim() : null;
+            }
+            if (validLocId && !locations.some(l => l.id === validLocId)) {
+              validLocId = null;
+            }
+
             const updatePayload: any = {
-                ...(existing || {}),
-                employee_id: empId,
-                date_iso: dateISO,
+                employee_id: String(empId).trim(),
+                date_iso: cleanDate,
+                sys_in_time: existing?.sys_in_time || null,
+                sys_out_time: existing?.sys_out_time || null,
+                manual_in_time: existing?.manual_in_time || null,
+                manual_out_time: existing?.manual_out_time || null,
+                id_number: existing?.id_number || String(empId).trim(),
+                location_id: validLocId,
+                status: existing?.status || 'Present',
+                live_location: existing?.live_location || null,
+                live_location_in: existing?.live_location_in || null,
+                live_location_out: existing?.live_location_out || null,
+                late_remark: existing?.late_remark || null
             };
 
             if (field === 'status') updatePayload.status = newValue;
             if (field === 'in') {
-                updatePayload.manual_in_time = newValue;
+                updatePayload.manual_in_time = newValue || null;
                 if (updatePayload.status === 'Absent' || !updatePayload.status) {
                     updatePayload.status = 'Manual';
                 }
             }
             if (field === 'out') {
-                updatePayload.manual_out_time = newValue;
+                updatePayload.manual_out_time = newValue || null;
                 if (updatePayload.status === 'Absent' || !updatePayload.status) {
                     updatePayload.status = 'Manual';
                 }
             }
-            if (field === 'remarks') updatePayload.late_remark = newValue;
-            if (field === 'location') updatePayload.location_id = newValue || null;
+            if (field === 'remarks') updatePayload.late_remark = newValue || null;
 
             const { error } = await supabase.from('attendance').upsert([updatePayload], { onConflict: 'employee_id,date_iso' });
 

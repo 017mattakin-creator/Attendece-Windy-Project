@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { FileSpreadsheet, Search, Calendar, MapPin, FileDown } from 'lucide-react';
-import { getTodayShiftDate, getEmployeeShift, isEmployeeActive } from '../lib/dateUtils';
+import { FileSpreadsheet, Search, Calendar, MapPin, FileDown, RefreshCw } from 'lucide-react';
+import { getTodayShiftDate, getEmployeeShift, isEmployeeActive, normalizeToYYYYMMDD } from '../lib/dateUtils';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -68,7 +68,11 @@ const getEmployeeRemarksForDate = (empId: string, dates: string | string[], atte
     
     // 1. Collect custom remarks from all selected dates so we don't lose manually entered remarks
     for (const d of validDates) {
-        const rec = attendanceList.find((a: any) => String(a.no).trim() === String(empId).trim() && a.dateISO === d);
+        const rec = attendanceList.find((a: any) => {
+            const aId = String(a.no ?? a.employee_id ?? '').trim();
+            const aDate = normalizeToYYYYMMDD(a.dateISO || a.date_iso || a.date || '');
+            return aId === cleanId && aDate === d;
+        });
         if (rec) {
             const customRemark = rec.late_remark?.trim();
             if (customRemark) {
@@ -80,13 +84,19 @@ const getEmployeeRemarksForDate = (empId: string, dates: string | string[], atte
     // 2. ONLY calculate automatic "Late" status based on the LATEST/LAST selected date of the range
     const lastDate = validDates[validDates.length - 1];
     if (lastDate) {
-        const rec = attendanceList.find((a: any) => String(a.no).trim() === String(empId).trim() && a.dateISO === lastDate);
+        const rec = attendanceList.find((a: any) => {
+            const aId = String(a.no ?? a.employee_id ?? '').trim();
+            const aDate = normalizeToYYYYMMDD(a.dateISO || a.date_iso || a.date || '');
+            return aId === cleanId && aDate === lastDate;
+        });
         if (rec) {
             const statusValue = rec.status || '';
             const customRemark = rec.late_remark?.trim();
-            // Only auto-mark if the employee was Present/Manual and has no manual remark on the last date
-            if (!customRemark && (statusValue === 'Present' || statusValue === 'Manual')) {
-                const originalIn = rec.manualInTime || rec.sysInTime || '';
+            const originalIn = rec.manualInTime || rec.sysInTime || '';
+            const hasPunches = !!(String(originalIn).trim());
+            
+            // Auto-mark if employee was Present/Manual/has punches and has no manual remark on the last date
+            if (!customRemark && (statusValue === 'Present' || statusValue === 'Manual' || hasPunches)) {
                 const inMinutes = parseTimeToMinutes(originalIn);
                 if (inMinutes !== null) {
                     if (empShift !== 'Night') {
@@ -132,50 +142,74 @@ interface Props {
 export default function ComparisonSection({ employees, attendance, locations = [], onEmployeeClick }: Props) {
     const [searchTerm, setSearchTerm] = useState('');
     
-    // Find custom dynamic default range based on latest available data to prevent blank starts
-    const getDefaultDates = () => {
-        const availableDates = attendance
-            .map(a => a.dateISO)
-            .filter(Boolean)
-            .sort();
-        
-        if (availableDates.length > 0) {
-            const lastDate = availableDates[availableDates.length - 1];
-            // Get previous date ISO
-            const parts = lastDate.split('-');
-            if (parts.length === 3) {
-                const [ystr, mstr, dstr] = parts;
-                const dObj = new Date(parseInt(ystr, 10), parseInt(mstr, 10) - 1, parseInt(dstr, 10) - 1);
-                const py = dObj.getFullYear();
-                const pm = String(dObj.getMonth() + 1).padStart(2, '0');
-                const pd = String(dObj.getDate()).padStart(2, '0');
-                return {
-                    start: `${py}-${pm}-${pd}`,
-                    end: lastDate
-                };
+    // Extract all valid unique YYYY-MM-DD dates from attendance
+    const getAvailableDates = (): string[] => {
+        const unique = new Set<string>();
+        attendance.forEach(a => {
+            const raw = a.dateISO || a.date_iso || a.date || '';
+            const norm = normalizeToYYYYMMDD(raw);
+            if (norm && /^\d{4}-\d{2}-\d{2}$/.test(norm)) {
+                unique.add(norm);
             }
+        });
+        return Array.from(unique).sort();
+    };
+
+    // Calculate smart initial default dates based on available data
+    const getInitialDateRange = () => {
+        const dates = getAvailableDates();
+        if (dates.length >= 2) {
+            return {
+                start: dates[dates.length - 2],
+                end: dates[dates.length - 1]
+            };
+        } else if (dates.length === 1) {
+            return {
+                start: dates[0],
+                end: dates[0]
+            };
         }
-        
-        // Default fallback to 2026-05-20 and 2026-05-21 as seen in the user's image
         return {
             start: '2026-05-20',
             end: '2026-05-21'
         };
     };
 
-    const initialDates = getDefaultDates();
+    const initialDates = getInitialDateRange();
     const [startDate, setStartDate] = useState(initialDates.start);
     const [endDate, setEndDate] = useState(initialDates.end);
 
-    // Dynamic list of dates in selected range
+    // Auto-synchronize date range when attendance data is loaded or changes
+    useEffect(() => {
+        const dates = getAvailableDates();
+        if (dates.length > 0) {
+            const hasDataInRange = dates.some(d => d >= startDate && d <= endDate);
+            // If currently selected range has no attendance records at all, auto-switch to latest available dates
+            if (!hasDataInRange) {
+                const latest = dates[dates.length - 1];
+                const prev = dates.length > 1 ? dates[dates.length - 2] : latest;
+                setStartDate(prev);
+                setEndDate(latest);
+            }
+        }
+    }, [attendance]);
+
+    // Timezone-safe date list generation using noon (12:00:00) to prevent any off-by-one daylight/timezone rollbacks
     const getDatesInRange = (startStr: string, endStr: string): string[] => {
         const dates: string[] = [];
         if (!startStr || !endStr) return dates;
-        const startObj = new Date(startStr);
-        const endObj = new Date(endStr);
-        if (isNaN(startObj.getTime()) || isNaN(endObj.getTime())) return dates;
-        
-        const current = new Date(startObj);
+        const normStart = normalizeToYYYYMMDD(startStr);
+        const normEnd = normalizeToYYYYMMDD(endStr);
+        if (!normStart || !normEnd) return dates;
+
+        const [sy, sm, sd] = normStart.split('-').map(Number);
+        const [ey, em, ed] = normEnd.split('-').map(Number);
+        if (!sy || !sm || !sd || !ey || !em || !ed) return dates;
+
+        const current = new Date(sy, sm - 1, sd, 12, 0, 0);
+        const endObj = new Date(ey, em - 1, ed, 12, 0, 0);
+        if (isNaN(current.getTime()) || isNaN(endObj.getTime())) return dates;
+
         while (current <= endObj) {
             const y = current.getFullYear();
             const m = String(current.getMonth() + 1).padStart(2, '0');
@@ -189,6 +223,47 @@ export default function ComparisonSection({ employees, attendance, locations = [
 
     const datesInRange = getDatesInRange(startDate, endDate);
     const minTableWidth = 830 + (datesInRange.length * 270);
+
+    // Centralized, bulletproof attendance record lookup for any employee and date
+    const getComparisonRecord = (empId: string, dStr: string) => {
+        const cleanId = String(empId).trim();
+        const rec = attendance.find((a: any) => {
+            const aId = String(a.no ?? a.employee_id ?? '').trim();
+            const aDate = normalizeToYYYYMMDD(a.dateISO || a.date_iso || a.date || '');
+            return aId === cleanId && aDate === dStr;
+        });
+
+        const isFuture = dStr > getTodayShiftDate(getEmployeeShift(empId));
+        const rawStatus = rec?.status || (isFuture ? '-' : 'Absent');
+
+        const inTime = rec ? (rec.manualInTime || rec.sysInTime || '') : '';
+        const outTime = rec ? (rec.manualOutTime || rec.sysOutTime || '') : '';
+        const hasPunches = !!(String(inTime).trim() || String(outTime).trim());
+
+        const isLeaveOrOff = ['OffDay', 'Festival', 'CL', 'SL', 'Holiday'].includes(rawStatus);
+        // Employee is present if marked Present/Manual or if valid punches exist (and not on explicit leave/off-day)
+        const isPresent = !isLeaveOrOff && (rawStatus === 'Present' || rawStatus === 'Manual' || hasPunches);
+
+        let locName = '-';
+        if (isPresent && rec) {
+            const recLocId = String(rec.locationId || rec.location_id || '').trim();
+            const locObj = locations.find(l => String(l.id).trim() === recLocId);
+            locName = locObj?.name || recLocId || '-';
+        }
+
+        const statusStyle = isPresent ? null : (rawStatus === '-' ? null : getCellStatusInfo(rawStatus));
+
+        return {
+            rec,
+            isPresent,
+            inTime: isPresent ? inTime : (statusStyle?.text || (rawStatus === '-' ? '' : rawStatus)),
+            outTime: isPresent ? outTime : (statusStyle?.text || (rawStatus === '-' ? '' : rawStatus)),
+            locName: isPresent ? locName : '-',
+            statusStyle,
+            statusValue: isPresent ? 'Present' : rawStatus,
+            hasPunches
+        };
+    };
 
     // Exact designation-seniority ranking mapping to reproduce the visual sequence from the screenshot
     const rankDesignation = (desig: string): number => {
@@ -244,7 +319,7 @@ export default function ComparisonSection({ employees, attendance, locations = [
         { id: '16156', name: 'MD. SAMSUL ALAM', category: 'JR.STAFF' }
     ];
 
-    // Build the executive list corresponding to the requested staff sequence, excluding inactive/resigned IDs
+    // Build the executive list corresponding to the requested staff sequence (strictly 23 active staff members, excluding inactive/resigned IDs)
     const mappedEmployees = TARGET_PEOPLE
         .filter(target => isEmployeeActive({ id: target.id, name: target.name }))
         .map(target => {
@@ -292,6 +367,7 @@ export default function ComparisonSection({ employees, attendance, locations = [
         }
     });
 
+    // Comparison is strictly for the 23 executive staff employees; security and non-staff are excluded
     const sortedEmployees = mappedEmployees.filter(emp => {
         const term = searchTerm.toLowerCase();
         return (
@@ -369,37 +445,10 @@ export default function ComparisonSection({ employees, attendance, locations = [
             ];
 
             datesInRange.forEach(dStr => {
-                const rec = attendance.find((a: any) => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dStr);
-                const isFuture = dStr > getTodayShiftDate(getEmployeeShift(emp.id));
-                const statusValue = rec ? rec.status : (isFuture ? '-' : 'Absent');
-                
-                const isPresent = statusValue === 'Present' || statusValue === 'Manual';
-                let locName = '-';
-                let inTime = '';
-                let outTime = '';
-                
-                if (isPresent) {
-                    locName = rec ? (locations.find(l => l.id === rec.locationId)?.name || rec.locationId || '-') : '-';
-                    inTime = rec ? (rec.manualInTime || rec.sysInTime || '') : '';
-                    outTime = rec ? (rec.manualOutTime || rec.sysOutTime || '') : '';
-                } else if (statusValue !== '-') {
-                    const statusLabels: Record<string, string> = {
-                        'OffDay': 'OFF DAY',
-                        'Festival': 'FESTIVAL',
-                        'Absent': 'ABSENT',
-                        'CL': 'CL (CASUAL)',
-                        'SL': 'SL (SICK)',
-                        'Holiday': 'HOLIDAY'
-                    };
-                    const lbl = statusLabels[statusValue] || statusValue.toUpperCase();
-                    locName = '-';
-                    inTime = lbl;
-                    outTime = lbl;
-                }
-                
-                rowData.push(locName);
-                rowData.push(inTime);
-                rowData.push(outTime);
+                const cmp = getComparisonRecord(emp.id, dStr);
+                rowData.push(cmp.locName);
+                rowData.push(cmp.inTime);
+                rowData.push(cmp.outTime);
             });
 
             const remarksObj = getEmployeeRemarksForDate(emp.id, datesInRange, attendance, locations);
@@ -467,8 +516,10 @@ export default function ComparisonSection({ employees, attendance, locations = [
 
         // Rows data
         const rows: any[] = [];
+        const srCount = sortedEmployees.filter(e => e.category === 'SR.STAFF').length;
+
         sortedEmployees.forEach((emp, i) => {
-            if (i === 11) {
+            if (emp.category === 'JR.STAFF' && (i === 0 || sortedEmployees[i - 1]?.category === 'SR.STAFF')) {
                 rows.push([{
                     content: 'JR.STAFF (Junior Office Staff & Support) / জুনিয়র স্টাফ',
                     colSpan: 10 + datesInRange.length * 3,
@@ -496,37 +547,10 @@ export default function ComparisonSection({ employees, attendance, locations = [
             ];
 
             datesInRange.forEach(dStr => {
-                const rec = attendance.find((a: any) => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dStr);
-                const isFuture = dStr > getTodayShiftDate(getEmployeeShift(emp.id));
-                const statusValue = rec ? rec.status : (isFuture ? '-' : 'Absent');
-                
-                const isPresent = statusValue === 'Present' || statusValue === 'Manual';
-                let locName = '-';
-                let inTime = '';
-                let outTime = '';
-                
-                if (isPresent) {
-                    locName = rec ? (locations.find(l => l.id === rec.locationId)?.name || rec.locationId || '-') : '-';
-                    inTime = rec ? (rec.manualInTime || rec.sysInTime || '') : '';
-                    outTime = rec ? (rec.manualOutTime || rec.sysOutTime || '') : '';
-                } else if (statusValue !== '-') {
-                    const statusLabels: Record<string, string> = {
-                        'OffDay': 'OFF DAY',
-                        'Festival': 'FESTIVAL',
-                        'Absent': 'ABSENT',
-                        'CL': 'CL (CASUAL)',
-                        'SL': 'SL (SICK)',
-                        'Holiday': 'HOLIDAY'
-                    };
-                    const lbl = statusLabels[statusValue] || statusValue.toUpperCase();
-                    locName = '-';
-                    inTime = lbl;
-                    outTime = lbl;
-                }
-                
-                rowData.push(locName);
-                rowData.push(inTime);
-                rowData.push(outTime);
+                const cmp = getComparisonRecord(emp.id, dStr);
+                rowData.push(cmp.locName);
+                rowData.push(cmp.inTime);
+                rowData.push(cmp.outTime);
             });
 
             const remarksObj = getEmployeeRemarksForDate(emp.id, datesInRange, attendance, locations);
@@ -627,9 +651,9 @@ export default function ComparisonSection({ employees, attendance, locations = [
                 }
 
                 const rowIndex = data.row.index;
-                const hasGap = sortedEmployees.length > 11;
+                const hasGap = srCount > 0 && srCount < sortedEmployees.length;
 
-                if (hasGap && rowIndex === 11) {
+                if (hasGap && rowIndex === srCount) {
                     // Styles are already assigned inline, but ensure alignment and weights
                     data.cell.styles.fillColor = [245, 245, 244];
                     data.cell.styles.textColor = [0, 0, 0]; // Absolute black
@@ -638,7 +662,7 @@ export default function ComparisonSection({ employees, attendance, locations = [
                     return;
                 }
 
-                const empIndex = (hasGap && rowIndex > 11) ? rowIndex - 1 : rowIndex;
+                const empIndex = (hasGap && rowIndex > srCount) ? rowIndex - 1 : rowIndex;
 
                 if (rowIndex !== undefined && empIndex < sortedEmployees.length) {
                     // Keep base textColor black
@@ -753,33 +777,98 @@ export default function ComparisonSection({ employees, attendance, locations = [
                     />
                 </div>
 
-                {/* Date Controls with intuitive Range logic */}
-                <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
-                    <div className="flex items-center gap-2">
-                        <span className="text-[10px] uppercase font-bold text-stone-500 flex items-center gap-1">
-                            <Calendar size={12} /> From:
-                        </span>
-                        <input 
-                            type="date" 
-                            value={startDate} 
-                            onChange={e => setStartDate(e.target.value)} 
-                            className="bg-white border border-stone-300 rounded-sm p-1.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#2a3a4a]"
-                            id="comp-start-date"
-                        />
+                {/* Date Controls with intuitive Range logic & Quick presets */}
+                <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] uppercase font-bold text-stone-500 flex items-center gap-1">
+                                <Calendar size={12} /> From:
+                            </span>
+                            <input 
+                                type="date" 
+                                value={startDate} 
+                                onChange={e => setStartDate(e.target.value)} 
+                                className="bg-white border border-stone-300 rounded-sm p-1.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#2a3a4a]"
+                                id="comp-start-date"
+                            />
+                        </div>
+                        
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] uppercase font-bold text-stone-500 flex items-center gap-1">
+                                <Calendar size={12} /> To:
+                            </span>
+                            <input 
+                                type="date" 
+                                value={endDate} 
+                                onChange={e => setEndDate(e.target.value)} 
+                                className="bg-white border border-stone-300 rounded-sm p-1.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#2a3a4a]"
+                                id="comp-end-date"
+                            />
+                        </div>
                     </div>
-                    
-                    <div className="flex items-center gap-2">
-                        <span className="text-[10px] uppercase font-bold text-stone-500 flex items-center gap-1">
-                            <Calendar size={12} /> To:
-                        </span>
-                        <input 
-                            type="date" 
-                            value={endDate} 
-                            onChange={e => setEndDate(e.target.value)} 
-                            className="bg-white border border-stone-300 rounded-sm p-1.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-[#2a3a4a]"
-                            id="comp-end-date"
-                        />
+
+                    {/* 1-Click Quick Preset Buttons */}
+                    <div className="flex items-center gap-1.5 text-[10px]">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const dates = getAvailableDates();
+                                if (dates.length >= 2) {
+                                    setStartDate(dates[dates.length - 2]);
+                                    setEndDate(dates[dates.length - 1]);
+                                } else if (dates.length === 1) {
+                                    setStartDate(dates[0]);
+                                    setEndDate(dates[0]);
+                                }
+                            }}
+                            className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded font-semibold transition-colors cursor-pointer"
+                            title="সর্বশেষ ডাটার ২ দিন নির্বাচন করুন"
+                        >
+                            সর্বশেষ ২ দিন
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const now = new Date();
+                                const yest = new Date(now);
+                                yest.setDate(yest.getDate() - 1);
+                                const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                                setStartDate(fmt(yest));
+                                setEndDate(fmt(now));
+                            }}
+                            className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded font-semibold transition-colors cursor-pointer"
+                            title="আজ ও গতকাল নির্বাচন করুন"
+                        >
+                            আজ ও গতকাল
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const dates = getAvailableDates();
+                                if (dates.length > 0) {
+                                    setStartDate(dates[0]);
+                                    setEndDate(dates[dates.length - 1]);
+                                }
+                            }}
+                            className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded font-semibold transition-colors cursor-pointer"
+                            title="ডাটাবেসের সকল তারিখ নির্বাচন করুন"
+                        >
+                            সব ডাটা
+                        </button>
                     </div>
+
+                    {/* Data Indicator Badge */}
+                    {(() => {
+                        const count = attendance.filter(a => {
+                            const d = normalizeToYYYYMMDD(a.dateISO || a.date_iso || a.date || '');
+                            return d && datesInRange.includes(d);
+                        }).length;
+                        return (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold border border-amber-200">
+                                {count} টি রেকর্ড
+                            </span>
+                        );
+                    })()}
                 </div>
             </div>
 
@@ -836,14 +925,15 @@ export default function ComparisonSection({ employees, attendance, locations = [
                     </thead>
                     <tbody>
                         {sortedEmployees.map((emp, idx) => {
-                            const isSeniorCol = idx < 11;
-                            // Match grid line color theme strictly by serial number: SL 1-11 gets coral/red, SL 12-24 gets green
+                            const isSeniorCol = emp.category === 'SR.STAFF';
+                            const isFirstJrStaff = emp.category === 'JR.STAFF' && (idx === 0 || sortedEmployees[idx - 1]?.category === 'SR.STAFF');
+                            // Match grid line color theme strictly by employee category: SR.STAFF gets coral/red, JR.STAFF gets green
                             const gridColorClass = isSeniorCol ? 'border-[#ff9494] text-red-950 font-medium' : 'border-[#94e294] text-emerald-950 font-medium';
                             const rowBg = idx % 2 === 0 ? 'bg-white' : 'bg-stone-50/50';
 
                             return (
                                 <React.Fragment key={emp.id}>
-                                    {idx === 11 && (
+                                    {isFirstJrStaff && (
                                         <tr key="comparison-section-gap" className="select-none">
                                             <td 
                                                 colSpan={10 + datesInRange.length * 3} 
@@ -914,16 +1004,8 @@ export default function ComparisonSection({ employees, attendance, locations = [
 
                                     {/* Dynamic attendance cells render */}
                                     {datesInRange.map(dStr => {
-                                        const rec = attendance.find((a: any) => String(a.no).trim() === String(emp.id).trim() && a.dateISO === dStr);
-                                        const isFuture = dStr > getTodayShiftDate(getEmployeeShift(emp.id));
-                                        const statusValue = rec ? rec.status : (isFuture ? '-' : 'Absent');
-                                        
-                                        const isPresent = statusValue === 'Present' || statusValue === 'Manual';
-                                        const locName = isPresent && rec ? (locations.find(l => l.id === rec.locationId)?.name || rec.locationId || '-') : '-';
-                                        const originalIn = isPresent && rec ? (rec.manualInTime || rec.sysInTime || '') : '';
-                                        const originalOut = isPresent && rec ? (rec.manualOutTime || rec.sysOutTime || '') : '';
-                                        
-                                        const statusStyle = getCellStatusInfo(statusValue);
+                                        const cmp = getComparisonRecord(emp.id, dStr);
+                                        const { locName, inTime, outTime, statusStyle } = cmp;
 
                                         return (
                                             <React.Fragment key={dStr}>
@@ -931,13 +1013,13 @@ export default function ComparisonSection({ employees, attendance, locations = [
                                                 <td className={`px-1 py-1.5 border text-center font-medium text-[9px] uppercase tracking-tight max-w-[72px] truncate ${gridColorClass} ${statusStyle ? statusStyle.bg + ' ' + statusStyle.color : ''}`} title={statusStyle ? '-' : locName}>
                                                     {statusStyle ? '-' : locName}
                                                 </td>
-                                                {/* IN TIME Column (Leaving blank if no record matches screenshot) */}
+                                                {/* IN TIME Column */}
                                                 <td className={`px-2 py-2.5 border text-center font-mono ${gridColorClass} ${statusStyle ? statusStyle.bg + ' ' + statusStyle.color + ' font-sans text-[9px] tracking-tight uppercase' : ''}`}>
-                                                    {statusStyle ? statusStyle.text : (originalIn || '')}
+                                                    {inTime}
                                                 </td>
-                                                {/* OUT TIME Column (Leaving blank if no record matches screenshot) */}
+                                                {/* OUT TIME Column */}
                                                 <td className={`px-2 py-2.5 border text-center font-mono ${gridColorClass} ${statusStyle ? statusStyle.bg + ' ' + statusStyle.color + ' font-sans text-[9px] tracking-tight uppercase' : ''}`}>
-                                                    {statusStyle ? statusStyle.text : (originalOut || '')}
+                                                    {outTime}
                                                 </td>
                                             </React.Fragment>
                                         );

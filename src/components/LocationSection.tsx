@@ -28,7 +28,9 @@ export default function LocationSection({ locations, onRefresh, viewMode }: Prop
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure? This might affect attendance records linked to this location.')) return;
+    if (!confirm('Are you sure? Any attendance records currently linked to this location will have their location unassigned.')) return;
+    // Nullify location_id on attendance rows first to avoid foreign key rejection
+    await supabase.from('attendance').update({ location_id: null }).eq('location_id', id);
     const { error } = await supabase.from('locations').delete().eq('id', id);
     if (error) alert(error.message);
     else onRefresh();

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { Sun, Moon, Pencil, Trash2, Check, X, UserX, UserCheck } from 'lucide-react';
-import { getEmployeeShift, setEmployeeShift, parseEducationAndShift, isEmployeeActive } from '../lib/dateUtils';
+import { getEmployeeShift, setEmployeeShift, parseEducationAndShift, isEmployeeActive, normalizeToYYYYMMDD } from '../lib/dateUtils';
 
 interface Employee {
   id: string;
@@ -81,12 +81,13 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
         const cleaned = {
             id: empId,
             name: newEmp.name,
-            designation: newEmp.designation || '',
-            category: newEmp.category || '',
-            join_date: newEmp.joinDate || null,
-            phone_number: newEmp.phoneNumber || '',
+            designation: newEmp.designation || null,
+            category: newEmp.category || null,
+            join_date: newEmp.joinDate ? normalizeToYYYYMMDD(newEmp.joinDate) : null,
+            phone_number: newEmp.phoneNumber || null,
             education: encodedEducation,
-            salary: newEmp.salary || ''
+            salary: newEmp.salary || '0',
+            status: 'Active'
         };
 
         const { error } = await supabase.from('employees').insert([cleaned]);
@@ -118,10 +119,10 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
             .from('employees')
             .update({
                 name: editForm.name,
-                designation: editForm.designation,
-                category: editForm.category,
-                join_date: editForm.joinDate || null,
-                phone_number: editForm.phoneNumber
+                designation: editForm.designation || null,
+                category: editForm.category || null,
+                join_date: editForm.joinDate ? normalizeToYYYYMMDD(editForm.joinDate) : null,
+                phone_number: editForm.phoneNumber || null
             })
             .eq('id', empId);
 
@@ -136,7 +137,11 @@ export default function EmployeeSection({ employees, onRefresh, viewMode }: Prop
     };
 
     const handleDeleteEmployee = async (empId: string, empName: string) => {
-        if (!confirm(`Are you sure you want to delete ${empName} (ID: ${empId})?`)) return;
+        if (!confirm(`Are you sure you want to delete ${empName} (ID: ${empId})? This will also remove associated attendance records.`)) return;
+        
+        // Delete referencing attendance rows first so foreign key constraint does not reject
+        await supabase.from('attendance').delete().eq('employee_id', empId);
+
         const { error } = await supabase
             .from('employees')
             .delete()

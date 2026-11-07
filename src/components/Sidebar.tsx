@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Users, Table, Upload, BarChart3, Settings, Clock, MapPin, X, Timer } from 'lucide-react';
+import { Home, Users, Table, Upload, BarChart3, Settings, Clock, MapPin, X, Timer, UserCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface Props {
@@ -20,6 +20,7 @@ export default function Sidebar({ activeSection, setActiveSection, viewMode, isO
         { id: 'upload', name: 'Upload Data', icon: Upload },
         { id: 'comparison', name: 'Comparison', icon: BarChart3 },
     ] : []),
+    { id: 'visitors', name: 'Visitors (ইন-আউট)', icon: UserCheck },
     { id: 'monthly', name: 'Monthly Report', icon: Table },
     { id: 'timecard', name: 'Time Card', icon: Clock },
     { id: 'late', name: 'Late Report', icon: Clock },

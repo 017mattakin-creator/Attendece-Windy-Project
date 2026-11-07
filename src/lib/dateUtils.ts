@@ -25,8 +25,9 @@ export function cacheDbShift(empId: string, shift: 'Day' | 'Night') {
   if (!empId) return;
   const id = String(empId).trim();
   dbShiftsCache[id] = shift;
-  // Also sync with localStorage for local robustness
-  localStorage.setItem(`emp_shift_${id}`, shift);
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(`emp_shift_${id}`, shift);
+  }
 }
 
 export function getEmployeeShift(empId: string, dbShift?: string): 'Day' | 'Night' {
@@ -45,9 +46,11 @@ export function getEmployeeShift(empId: string, dbShift?: string): 'Day' | 'Nigh
   }
 
   // 3. Fallback to localStorage
-  const saved = localStorage.getItem(`emp_shift_${id}`);
-  if (saved === 'Day' || saved === 'Night') {
-    return saved;
+  if (typeof localStorage !== 'undefined') {
+    const saved = localStorage.getItem(`emp_shift_${id}`);
+    if (saved === 'Day' || saved === 'Night') {
+      return saved;
+    }
   }
 
   return 'Day';
@@ -57,7 +60,9 @@ export function setEmployeeShift(empId: string, shift: 'Day' | 'Night') {
   if (!empId) return;
   const id = String(empId).trim();
   dbShiftsCache[id] = shift;
-  localStorage.setItem(`emp_shift_${id}`, shift);
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(`emp_shift_${id}`, shift);
+  }
 }
 
 export function getTodayShiftDate(shift: 'Day' | 'Night' = 'Day'): string {
@@ -119,22 +124,63 @@ export function formatSystemDate(dateISO: string): string {
   return dateISO;
 }
 
-export function parseDateTimeToLocal(dateStr: string, timeStr: string): Date | null {
-  if (!dateStr) return null;
+export function excelSerialToDate(serial: number): Date {
+  // Excel base date: Dec 30 1899 (accounting for the 1900 leap year bug)
+  // Whole number is days since 1899-12-30, fraction is time of day.
+  const utcMillis = Math.round((serial - 25569) * 86400 * 1000);
+  const d = new Date(utcMillis);
+  return new Date(
+    d.getUTCFullYear(),
+    d.getUTCMonth(),
+    d.getUTCDate(),
+    d.getUTCHours(),
+    d.getUTCMinutes(),
+    d.getUTCSeconds()
+  );
+}
+
+export function parseDateTimeToLocal(
+  dateStr: string, 
+  timeStr: string,
+  preferredFormat: 'MDY' | 'DMY' | 'auto' = 'auto'
+): Date | null {
+  if (!dateStr && !timeStr) return null;
   
+  const dStr = (dateStr || '').trim();
+  const tStr = (timeStr || '').trim();
+
+  // 1. Check if dateStr itself is an Excel serial number (e.g., 45443 or 45443.375)
+  if (dStr && !isNaN(Number(dStr)) && Number(dStr) > 1000 && Number(dStr) < 100000) {
+    const baseDate = excelSerialToDate(Number(dStr));
+    if (!isNaN(baseDate.getTime())) {
+      if (tStr) {
+        // Override with explicit timeStr if given
+        const tMatch = tStr.match(/(\d{1,2})\s*[:.]\s*(\d{1,2})(?:\s*[:.]\s*(\d{1,2}))?(?:\s*(am|pm|AM|PM))?/i);
+        if (tMatch) {
+          let h = parseInt(tMatch[1], 10);
+          const m = parseInt(tMatch[2], 10);
+          const ampm = tMatch[4]?.toLowerCase();
+          if (ampm === 'pm' && h < 12) h += 12;
+          if (ampm === 'am' && h === 12) h = 0;
+          baseDate.setHours(h, m, 0, 0);
+        }
+      }
+      return baseDate;
+    }
+  }
+
   let year = new Date().getFullYear();
   let month = new Date().getMonth(); // 0-based
   let day = new Date().getDate();
   
-  const dStr = dateStr.trim();
-  const tStr = timeStr.trim();
-  
-  // 1. Check for DD-MMM-YY or DD-MMM-YYYY (e.g., 20-May-2026, 20-May-26)
-  const dmyMatch = dStr.match(/^(\d{1,2})[-/.]\s*([A-Za-z]{3})\s*[-/.]\s*(\d{2,4})$/i);
+  // 2. Check for DD-MMM-YY or DD-MMM-YYYY (e.g., 20-May-2026, 20-May-26, 20 May 2026)
+  const dmyMatch = dStr.match(/^(\d{1,2})[-/.\s]\s*([A-Za-z]{3,9})\s*[-/.\s]\s*(\d{2,4})$/i);
   if (dmyMatch) {
     day = parseInt(dmyMatch[1], 10);
     const monthMap: Record<string, number> = {
-      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+      jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
+      may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7,
+      sep: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11
     };
     const mStr = dmyMatch[2].toLowerCase();
     if (mStr in monthMap) {
@@ -144,9 +190,18 @@ export function parseDateTimeToLocal(dateStr: string, timeStr: string): Date | n
     if (y < 100) y += 2000;
     year = y;
   } 
-  // 2. Check for DD-MM-YYYY or MM-DD-YYYY or DD/MM/YYYY or MM/DD/YYYY
+  // 3. Check for YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
+  else if (/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/.test(dStr)) {
+    const ymdMatch = dStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (ymdMatch) {
+      year = parseInt(ymdMatch[1], 10);
+      month = parseInt(ymdMatch[2], 10) - 1;
+      day = parseInt(ymdMatch[3], 10);
+    }
+  }
+  // 4. Check for DD-MM-YYYY or MM-DD-YYYY or DD/MM/YYYY or MM/DD/YYYY
   else {
-    const dmyNumericMatch = dStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
+    const dmyNumericMatch = dStr.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/);
     if (dmyNumericMatch) {
       const part1 = parseInt(dmyNumericMatch[1], 10);
       const part2 = parseInt(dmyNumericMatch[2], 10);
@@ -154,87 +209,122 @@ export function parseDateTimeToLocal(dateStr: string, timeStr: string): Date | n
       if (y < 100) y += 2000;
       year = y;
 
-      // Smart format detection:
-      if (part2 > 12) {
-        // part2 is definitely the day, so format is MM/DD/YYYY
+      if (preferredFormat === 'MDY') {
         day = part2;
         month = part1 - 1;
-      } else if (part1 > 12) {
-        // part1 is definitely the day, so format is DD/MM/YYYY
+      } else if (preferredFormat === 'DMY') {
         day = part1;
         month = part2 - 1;
       } else {
-        // Both <= 12. Default to MM/DD/YYYY (biometric machine standard)
-        // If the user's system uses DD/MM/YYYY, we can try to detect it if one part > 12 elsewhere
-        day = part2;
-        month = part1 - 1;
+        // Smart format auto-detection:
+        if (part2 > 12) {
+          // part2 > 12 means part2 is definitely the day -> MM/DD/YYYY (MDY)
+          day = part2;
+          month = part1 - 1;
+        } else if (part1 > 12) {
+          // part1 > 12 means part1 is definitely the day -> DD/MM/YYYY (DMY)
+          day = part1;
+          month = part2 - 1;
+        } else {
+          // Both <= 12: if part1 matches 10 in 2026 (current month), it's Month 10 (October)
+          if (part1 === 10 && y === 2026) {
+            day = part2;
+            month = part1 - 1;
+          } else {
+            day = part1;
+            month = part2 - 1;
+          }
+        }
       }
-    }
-    // 3. Check for YYYY-MM-DD or YYYY/MM/DD
-    else {
-      const ymdMatch = dStr.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
-      if (ymdMatch) {
-        year = parseInt(ymdMatch[1], 10);
-        month = parseInt(ymdMatch[2], 10) - 1;
-        day = parseInt(ymdMatch[3], 10);
-      } else {
-        const fallbackDate = new Date(dStr);
-        if (isNaN(fallbackDate.getTime())) return null;
+    } else {
+      const fallbackDate = new Date(dStr);
+      if (!isNaN(fallbackDate.getTime())) {
         year = fallbackDate.getFullYear();
         month = fallbackDate.getMonth();
         day = fallbackDate.getDate();
+        if (!tStr) {
+          // If fallback already had time embedded:
+          return fallbackDate;
+        }
+      } else {
+        return null;
       }
     }
   }
   
   let hours = 0;
   let minutes = 0;
+  let seconds = 0;
   
   if (tStr) {
-    const tMatch = tStr.match(/(\d{1,2})\s*[:.]\s*(\d{1,2})(?:\s*(am|pm|AM|PM))?/i);
+    // Regex supports HH:MM, HH:MM:SS with or without AM/PM
+    const tMatch = tStr.match(/(\d{1,2})\s*[:.]\s*(\d{1,2})(?:\s*[:.]\s*(\d{1,2}))?(?:\s*(am|pm|AM|PM))?/i);
     if (tMatch) {
       let h = parseInt(tMatch[1], 10);
       const m = parseInt(tMatch[2], 10);
-      const ampm = tMatch[3]?.toLowerCase();
+      const s = tMatch[3] ? parseInt(tMatch[3], 10) : 0;
+      const ampm = tMatch[4]?.toLowerCase();
       if (ampm === 'pm' && h < 12) h += 12;
       if (ampm === 'am' && h === 12) h = 0;
       hours = h;
       minutes = m;
+      seconds = s;
+    } else if (!isNaN(Number(tStr)) && Number(tStr) >= 0 && Number(tStr) < 1) {
+      // Excel fractional time serial (e.g. 0.3541666667)
+      const frac = Number(tStr);
+      hours = Math.floor(frac * 24);
+      minutes = Math.floor((frac * 24 * 60) % 60);
+      seconds = Math.round((frac * 86400) % 60);
     }
   }
   
-  const result = new Date(year, month, day, hours, minutes, 0, 0);
+  const result = new Date(year, month, day, hours, minutes, seconds, 0);
   return isNaN(result.getTime()) ? null : result;
 }
 
-export function normalizeToYYYYMMDD(dateStr: string): string {
+export function normalizeToYYYYMMDD(dateStr: string, preferredFormat: 'MDY' | 'DMY' | 'auto' = 'auto'): string {
   if (!dateStr) return '';
-  // If already in YYYY-MM-DD format, return as is
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  const trimmed = String(dateStr).trim();
+  // If already in clean YYYY-MM-DD format, return as is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
   
-  const d = parseDateTimeToLocal(dateStr, '00:00');
-  if (!d) return dateStr;
+  const d = parseCombinedDateTimeToLocal(trimmed, preferredFormat) || parseDateTimeToLocal(trimmed, '00:00', preferredFormat);
+  if (!d || isNaN(d.getTime())) return trimmed;
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
 
-export function parseCombinedDateTimeToLocal(dateTimeStr: string): Date | null {
+export function parseCombinedDateTimeToLocal(
+  dateTimeStr: string,
+  preferredFormat: 'MDY' | 'DMY' | 'auto' = 'auto'
+): Date | null {
   if (!dateTimeStr) return null;
-  const trimmed = dateTimeStr.trim().replace(/\s+/g, ' ');
+  const trimmed = String(dateTimeStr).trim().replace(/\s+/g, ' ');
   
-  // Try splitting by space or 'T' (ISO format)
-  const parts = trimmed.split(/[\sT]/);
-  if (parts.length >= 2) {
-    // Usually the first part is date, second is time
-    // But sometimes it might be "20-May-2024 10:30 PM" -> ["20-May-2024", "10:30", "PM"]
-    const dateStr = parts[0];
-    const timeStr = parts.slice(1).join(' ');
-    return parseDateTimeToLocal(dateStr, timeStr);
+  // 1. Direct Excel serial check
+  if (!isNaN(Number(trimmed)) && Number(trimmed) > 1000 && Number(trimmed) < 100000) {
+    return excelSerialToDate(Number(trimmed));
   }
   
-  return parseDateTimeToLocal(trimmed, '');
+  // 2. ISO 8601 string
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(trimmed)) {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // 3. Split by space or 'T'
+  const parts = trimmed.split(/[\sT]/);
+  if (parts.length >= 2) {
+    // If format is like "10/05/2026 08:30:00 PM" -> parts: ["10/05/2026", "08:30:00", "PM"]
+    const dateStr = parts[0];
+    const timeStr = parts.slice(1).join(' ');
+    const res = parseDateTimeToLocal(dateStr, timeStr, preferredFormat);
+    if (res && !isNaN(res.getTime())) return res;
+  }
+  
+  return parseDateTimeToLocal(trimmed, '', preferredFormat);
 }
 
 export function getShiftRelativeMinutes(timeStr: string, shift: 'Day' | 'Night' = 'Day', locationId?: string, employeeId?: string): number {
@@ -298,7 +388,7 @@ export function isEmployeeActive(emp: any): boolean {
   if (status === 'resigned' || status === 'inactive' || status === 'left') return false;
   const education = String(emp.education || '').toLowerCase();
   if (education.includes('resigned') || education.includes('inactive')) return false;
-  if (id) {
+  if (id && typeof localStorage !== 'undefined') {
     const localStatus = localStorage.getItem(`emp_status_${id}`);
     if (localStatus === 'resigned' || localStatus === 'inactive') return false;
   }

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Table, Upload, Menu, X } from 'lucide-react';
+import { Table, Upload, Menu, X, UserCheck } from 'lucide-react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { checkConnection, supabase } from './lib/supabaseClient';
@@ -21,7 +21,15 @@ import LocationSection from './components/LocationSection';
 import UploadSection from './components/UploadSection';
 import ManualEntrySection from './components/ManualEntrySection';
 import LiveLocationMap from './components/LiveLocationMap';
+import VisitorSection from './components/VisitorSection';
 import { getTodayShiftDate, formatSystemDate, getEmployeeShift, getShiftDateForTime, parseCombinedDateTimeToLocal, getShiftRelativeMinutes, cacheDbShift, parseEducationAndShift, normalizeToYYYYMMDD, getPossibleDateFormats, isEmployeeActive } from './lib/dateUtils';
+import { 
+  UploadStats, 
+  findHeaderRow, 
+  readExcelToArray, 
+  readCsvToArray, 
+  extractPunchesFromRows 
+} from './lib/uploadParser';
 
 interface AttendanceRecord {
   name: string;
@@ -223,6 +231,8 @@ export default function App() {
   const [locations, setLocations] = useState<{id: string, name: string}[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStage, setUploadStage] = useState('Processing records...');
+  const [uploadResult, setUploadResult] = useState<UploadStats | null>(null);
   const [preSelectedEmployeeId, setPreSelectedEmployeeId] = useState<string | null>(null);
 
 
@@ -244,318 +254,400 @@ export default function App() {
     setViewMode(mode);
   };
 
-  const processData = async (parsedLines: any[]) => {
-    console.log('Processing data lines:', parsedLines.length);
-    if (!parsedLines || parsedLines.length === 0) {
-      setUploading(false);
-      return;
-    }
-    
-    // Clean BOM/spaces from keys and values for bulletproof parsing
-    const rawData = parsedLines.map(row => {
-        const cleanedRow: any = {};
-        for (const k of Object.keys(row)) {
-            const cleanedKey = k.toLowerCase().replace(/^\uFEFF/, '').trim();
-            cleanedRow[cleanedKey] = row[k] !== undefined && row[k] !== null ? String(row[k]).trim() : '';
-        }
-        
-        // Comprehensive ID detection including user's specific "No." column
-        const rawId = cleanedRow['no.'] || cleanedRow['no'] || cleanedRow['id'] || 
-                      cleanedRow['employee id'] || cleanedRow['employeeid'] || 
-                      cleanedRow['id number'] || cleanedRow['idnumber'] || 
-                      cleanedRow['emp. id'] || cleanedRow['ac-no'] || 
-                      cleanedRow['enroll number'] || cleanedRow['userid'] ||
-                      cleanedRow['staff id'] || cleanedRow['staffid'];
-                      
-        let cleanId = rawId ? String(rawId).trim() : '';
-        if (cleanId.endsWith('.0')) {
-            cleanId = cleanId.slice(0, -2);
-        }
-        cleanedRow._cleanEmpId = cleanId;
-        return cleanedRow;
-    }).filter(row => {
-        if (!row._cleanEmpId) {
-            // Only warn if row has some actual data (skip purely empty rows)
-            const hasData = Object.keys(row).some(k => k !== '_cleanEmpId' && row[k] !== '');
-            if (hasData) console.warn('Row missing identification column:', row);
-        }
-        return !!row._cleanEmpId;
-    });
-
-    if (rawData.length === 0) {
-      alert('Upload failed: Could not find any valid employee IDs.\n\nMake sure your file has a column named "No.", "ID", "No", or "Employee ID".');
-      setUploading(false);
-      return;
-    }
-    
-    // First, get all current employee IDs from the database
-    const { data: allEmps } = await supabase.from('employees').select('id, name');
-    const empIdSet = new Set(allEmps?.map(e => String(e.id).trim()) || []);
-    const empNameMap = new Map<string, string>(); // name.toLowerCase() -> id
-    allEmps?.forEach(e => {
-        if (e.name) empNameMap.set(e.name.toLowerCase().trim(), String(e.id).trim());
-    });
-
-    // Fetch all current locations
-    const { data: allLocs } = await supabase.from('locations').select('id, name');
-    const locIdSet = new Set(allLocs?.map(l => String(l.id).trim()) || []);
-    const locNameMap = new Map<string, string>();
-    allLocs?.forEach(l => {
-        if (l.name) locNameMap.set(l.name.toLowerCase().trim(), String(l.id).trim());
-    });
-
-    // Auto-registration module for new employees
-    const missingEmployeesToRegister = new Map<string, any>();
-    for (const rec of rawData) {
-        const empId = rec._cleanEmpId;
-        if (empId && !empIdSet.has(empId) && !missingEmployeesToRegister.has(empId)) {
-            const rawName = (rec['name'] || rec['employee name'] || rec['staff name'] || rec['ename'] || '').trim();
-            const empName = rawName || `Employee ${empId}`;
-            const designation = (rec['id number'] || rec['designation'] || rec['post'] || rec['title'] || '').trim();
-            const category = (rec['department'] || rec['category'] || rec['dept'] || rec['group'] || 'staff').trim();
-            
-            missingEmployeesToRegister.set(empId, {
-                id: empId,
-                name: empName,
-                designation: designation,
-                category: category,
-                join_date: null,
-                phone_number: '',
-                education: 'Graduate|Day',
-                salary: '0'
-            });
-        }
-    }
-
-    if (missingEmployeesToRegister.size > 0) {
-        const toInsert = Array.from(missingEmployeesToRegister.values());
-        const { error: insertError } = await supabase.from('employees').insert(toInsert);
-        if (!insertError) {
-            toInsert.forEach(emp => {
-                empIdSet.add(emp.id);
-                cacheDbShift(emp.id, 'Day');
-            });
-        }
-    }
-
-    // Auto-registration for missing locations
-    const missingLocationsToRegister = new Map<string, any>();
-    for (const rec of rawData) {
-        const rawLoc = String(rec['location id'] || rec['location'] || rec['location name'] || rec['area'] || rec['site'] || '').trim();
-        if (rawLoc) {
-            const rawLocLower = rawLoc.toLowerCase();
-            if (!locIdSet.has(rawLoc) && !locNameMap.has(rawLocLower) && !missingLocationsToRegister.has(rawLocLower)) {
-                const isNumeric = /^\d+$/.test(rawLoc);
-                missingLocationsToRegister.set(rawLocLower, { id: rawLoc, name: isNumeric ? `Location ${rawLoc}` : rawLoc });
-            }
-        }
-    }
-
-    if (missingLocationsToRegister.size > 0) {
-        const toInsertLocs = Array.from(missingLocationsToRegister.values());
-        const { error: insertLocError } = await supabase.from('locations').insert(toInsertLocs);
-        if (!insertLocError) {
-            toInsertLocs.forEach(loc => {
-                locIdSet.add(loc.id);
-                locNameMap.set(loc.name.toLowerCase().trim(), loc.id);
-            });
-        }
-    }
-
-    const groupedData: Record<string, any> = {};
-    let skippedCount = 0;
-
-    for (let i = 0; i < rawData.length; i++) {
-       const rec = rawData[i];
-       const empId = rec._cleanEmpId;
-       const datePart = rec['date'] || rec['date/time'] || rec['datetime'] || rec['dateiso'] || rec['logdate'] || rec['punchdate'] || rec['work date'] || '';
-       const timePart = rec['time'] || rec['logtime'] || rec['punchtime'] || rec['clock time'] || '';
-       const dateTimeStr = (datePart + ' ' + timePart).trim();
-
-       if (empId && dateTimeStr && empIdSet.has(empId)) {
-          try {
-              const dateObj = parseCombinedDateTimeToLocal(dateTimeStr);
-              if (dateObj && !isNaN(dateObj.getTime())) {
-                  const empShift = getEmployeeShift(empId);
-                  const dateIso = getShiftDateForTime(dateObj, empShift);
-                  const hh = String(dateObj.getHours()).padStart(2, '0');
-                  const mm = String(dateObj.getMinutes()).padStart(2, '0');
-                  const timeStr = `${hh}:${mm}`;
-                  const key = `${empId}_${dateIso}`;
-
-                  const rawLoc = String(rec['location id'] || rec['location'] || rec['location name'] || rec['area'] || rec['site'] || '').trim();
-                  let resolvedLocId: string | null = null;
-                  if (rawLoc) {
-                      if (locIdSet.has(rawLoc)) resolvedLocId = rawLoc;
-                      else if (locNameMap.has(rawLoc.toLowerCase())) resolvedLocId = locNameMap.get(rawLoc.toLowerCase()) || null;
-                  }
-
-                  if (!groupedData[key]) {
-                      groupedData[key] = {
-                          empId, date: dateIso, punches: [],
-                          idKey: rec['id number'] || rec['idkey'] || rec['idnumber'] || rec['title'] || null,
-                          locationId: resolvedLocId
-                      };
-                  } else if (resolvedLocId && !groupedData[key].locationId) {
-                      groupedData[key].locationId = resolvedLocId;
-                  }
-                  groupedData[key].punches.push({ time: dateObj, timeStr });
-              }
-          } catch (e) { console.error("Error parsing date:", dateTimeStr, e); }
-       } else if (empId && !empIdSet.has(empId)) {
-          skippedCount++;
-       }
-       if (i % Math.max(1, Math.floor(rawData.length / 10)) === 0) {
-          setUploadProgress(Math.round(((i + 1) / rawData.length) * 30)); 
-       }
-    }
-
-    const empIdsToFetch = Array.from(new Set(Object.values(groupedData).map((g: any) => g.empId)));
-    const datesToFetchSet = new Set<string>();
-    Object.values(groupedData).forEach((g: any) => {
-        datesToFetchSet.add(g.date);
-        const parts = g.date.split('-');
-        if (parts.length === 3) {
-            const nextDay = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10) + 1);
-            datesToFetchSet.add(`${nextDay.getFullYear()}-${String(nextDay.getMonth() + 1).padStart(2, '0')}-${String(nextDay.getDate()).padStart(2, '0')}`);
-        }
-    });
-    const datesToFetch = Array.from(datesToFetchSet);
-
-    const existingMap: Record<string, any> = {};
-    if (empIdsToFetch.length > 0 && datesToFetch.length > 0) {
-        const fetchChunkSize = 100;
-        for (let i = 0; i < empIdsToFetch.length; i += fetchChunkSize) {
-            const { data: records } = await supabase.from('attendance').select('*')
-                .in('employee_id', empIdsToFetch.slice(i, i + fetchChunkSize))
-                .in('date_iso', datesToFetch);
-            records?.forEach((r: any) => {
-                const key = `${String(r.employee_id).trim()}_${normalizeToYYYYMMDD(r.date_iso || '')}`;
-                const hasPunches = (rec: any) => !!(rec.sys_in_time || rec.sys_out_time || rec.manual_in_time || rec.manual_out_time);
-                if (!existingMap[key] || (!hasPunches(existingMap[key]) && hasPunches(r))) existingMap[key] = r;
-            });
-        }
-    }
-
-    setUploadProgress(35);
-
-    const attendanceData = Object.values(groupedData).map((group: any) => {
-        const { empId, date: dateIso } = group;
-        const key = `${empId}_${dateIso}`;
-        const existing = existingMap[key];
-        const firstDayPunches: any[] = [];
-        const nextDayLatePunches: any[] = [];
-
-        if (dateIso) {
-            try {
-                const parts = dateIso.split('-');
-                const nextDayStart = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10) + 1, 0, 0, 0);
-                const nextDayEnd = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10) + 1, 6, 0, 0);
-                group.punches.forEach((p: any) => {
-                    if (p.time.getTime() >= nextDayStart.getTime() && p.time.getTime() <= nextDayEnd.getTime()) nextDayLatePunches.push(p);
-                    else firstDayPunches.push(p);
-                });
-            } catch (e) { firstDayPunches.push(...group.punches); }
-        } else firstDayPunches.push(...group.punches);
-
-        const uniqueFirst = Array.from(new Set(firstDayPunches.map(p => p.timeStr))).map(t => firstDayPunches.find(p => p.timeStr === t)!).sort((a, b) => a.time.getTime() - b.time.getTime());
-        const uniqueNext = Array.from(new Set(nextDayLatePunches.map(p => p.timeStr))).map(t => nextDayLatePunches.find(p => p.timeStr === t)!).sort((a, b) => a.time.getTime() - b.time.getTime());
-
-        let inTime = uniqueFirst.length > 0 ? uniqueFirst[0].timeStr : null;
-        let outTime = uniqueNext.length > 0 ? uniqueNext[uniqueNext.length-1].timeStr : (uniqueFirst.length > 1 ? uniqueFirst[uniqueFirst.length-1].timeStr : null);
-
-        return {
-            ...(existing || {}), employee_id: empId, date_iso: dateIso,
-            sys_in_time: inTime, sys_out_time: outTime,
-            manual_in_time: inTime, manual_out_time: outTime,
-            id_number: group.idKey || (existing ? existing.id_number : null),
-            location_id: group.locationId || (existing ? existing.location_id : null),
-            status: (existing && existing.status && existing.status !== 'Absent') ? existing.status : 'Present'
-        };
-    });
-
-    const finalAttendanceMap: Record<string, any> = { ...existingMap };
-    attendanceData.forEach(item => finalAttendanceMap[`${item.employee_id}_${item.date_iso}`] = item);
-
-    const sanitizedAttendanceData = Object.values(finalAttendanceMap).filter((item: any) => 
-        item.employee_id && item.date_iso && (!!existingMap[`${item.employee_id}_${item.date_iso}`] || !!(item.sys_in_time || item.sys_out_time || item.manual_in_time || item.manual_out_time) || (item.status && item.status !== 'Absent'))
-    );
-
-    setUploadProgress(40);
-    let errorCount = 0;
-    let lastErrorMsg = '';
-    const chunkSize = 50;
-    for (let i = 0; i < sanitizedAttendanceData.length; i += chunkSize) {
-      const chunk = sanitizedAttendanceData.slice(i, i + chunkSize);
-      const cleanedChunk = chunk.map((item: any) => {
-          const c: any = {
-              employee_id: String(item.employee_id).trim(), date_iso: item.date_iso,
-              sys_in_time: item.sys_in_time || null, sys_out_time: item.sys_out_time || null,
-              manual_in_time: item.manual_in_time || item.sys_in_time || null,
-              manual_out_time: item.manual_out_time || item.sys_out_time || null,
-              status: item.status || 'Present', location_id: item.location_id || null,
-              id_number: item.id_number || null, live_location_in: item.live_location_in || null,
-              live_location_out: item.live_location_out || null, late_remark: item.late_remark || null
-          };
-          if (item.live_location) c.live_location = item.live_location;
-          return c;
-      });
-
-      const { error: upsertError } = await supabase.from('attendance').upsert(cleanedChunk, { onConflict: 'employee_id,date_iso' });
-      if (upsertError) { errorCount += chunk.length; lastErrorMsg = upsertError.message; }
-      setUploadProgress(40 + Math.round(((i + chunk.length) / sanitizedAttendanceData.length) * 60));
-    }
-
-    alert(`Upload finished!\n- ${sanitizedAttendanceData.length - errorCount} records updated.\n${errorCount > 0 ? `- ${errorCount} failed records.\n` : ''}${skippedCount > 0 ? `- ${skippedCount} items skipped.` : ''}`);
-    fetchData();
-    setUploading(false);
-    setUploadProgress(0);
-  };
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setUploading(true);
-    setUploadProgress(0);
-
     const fileName = file.name.toLowerCase();
-    
-    if (fileName.endsWith('.csv')) {
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: "greedy",
-        error: (err) => {
-          console.error('Papa.parse error:', err);
-          alert('CSV Parsing Error: ' + err.message);
-          setUploading(false);
-        },
-        complete: (results) => processData(results.data)
+    const isCsv = fileName.endsWith('.csv');
+    const isExcel = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
+
+    if (!isCsv && !isExcel) {
+      setUploadResult({
+        success: false,
+        totalRowsRead: 0,
+        totalPunches: 0,
+        recordsUpserted: 0,
+        failedCount: 0,
+        skippedInactiveCount: 0,
+        newEmployeesCreated: 0,
+        detectedHeaders: [],
+        sampleDates: [],
+        errorMessage: 'Unsupported file format. Please upload .CSV or .XLSX / .XLS files.'
       });
-    } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = new Uint8Array(e.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet);
-          processData(jsonData);
-        } catch (err: any) {
-          console.error('Excel parse error:', err);
-          alert('Excel Parsing Error: ' + err.message);
-          setUploading(false);
-        }
-      };
-      reader.onerror = () => {
-        alert('File reading failed');
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress(5);
+    setUploadStage('Reading file data...');
+    setUploadResult(null);
+
+    try {
+      let rawRows: any[][] = [];
+      if (isCsv) {
+        const text = await file.text();
+        rawRows = await readCsvToArray(text);
+      } else {
+        const arrayBuffer = await file.arrayBuffer();
+        rawRows = readExcelToArray(arrayBuffer);
+      }
+
+      if (!rawRows || rawRows.length === 0) {
+        setUploadResult({
+          success: false,
+          totalRowsRead: 0,
+          totalPunches: 0,
+          recordsUpserted: 0,
+          failedCount: 0,
+          skippedInactiveCount: 0,
+          newEmployeesCreated: 0,
+          detectedHeaders: [],
+          sampleDates: [],
+          errorMessage: 'File appears to be empty or contains no readable rows.'
+        });
         setUploading(false);
-      };
-      reader.readAsArrayBuffer(file);
-    } else {
-      alert('Unsupported file format. Please upload .CSV or .XLSX');
+        setUploadProgress(0);
+        return;
+      }
+
+      setUploadProgress(15);
+      setUploadStage('Detecting biometric headers and columns...');
+      const { headerIndex, headers } = findHeaderRow(rawRows);
+
+      setUploadProgress(25);
+      setUploadStage('Checking employee records in database...');
+      const { data: allEmps, error: empErr } = await supabase.from('employees').select('id, name, education, category');
+      if (empErr) console.warn('Employee fetch error:', empErr);
+      const empIdSet = new Set(allEmps?.map(e => String(e.id).trim()) || []);
+      const empNameMap = new Map<string, string>();
+      allEmps?.forEach(e => {
+        if (e.name) empNameMap.set(String(e.name).toLowerCase().trim(), String(e.id).trim());
+      });
+
+      const { data: allLocs } = await supabase.from('locations').select('id, name');
+      const locIdSet = new Set(allLocs?.map(l => String(l.id).trim()) || []);
+      const locNameMap = new Map<string, string>();
+      allLocs?.forEach(l => {
+        if (l.name) locNameMap.set(String(l.name).toLowerCase().trim(), String(l.id).trim());
+      });
+
+      setUploadProgress(35);
+      setUploadStage('Extracting punches and assigning shifts...');
+      const { punches, skippedCount, skippedInactive, rawRowsCount } = extractPunchesFromRows(
+        rawRows, 
+        headerIndex, 
+        headers, 
+        empNameMap
+      );
+
+      if (punches.length === 0) {
+        const sampleHeaders = headers.filter(h => !h.startsWith('column_')).join(', ');
+        setUploadResult({
+          success: false,
+          totalRowsRead: rawRowsCount,
+          totalPunches: 0,
+          recordsUpserted: 0,
+          failedCount: skippedCount,
+          skippedInactiveCount: skippedInactive,
+          newEmployeesCreated: 0,
+          detectedHeaders: headers.filter(h => !h.startsWith('column_')),
+          sampleDates: [],
+          errorMessage: `No valid attendance punches could be identified. Detected columns: [${sampleHeaders || 'None'}]. Please verify that the file contains employee IDs (e.g. No., ID, AC-No, Employee ID) and punch dates/times.`
+        });
+        setUploading(false);
+        setUploadProgress(0);
+        return;
+      }
+
+      // Auto-register missing employees
+      setUploadStage('Registering any new employees...');
+      const missingEmployees = new Map<string, any>();
+      for (const p of punches) {
+        if (p.empId && !empIdSet.has(p.empId) && !missingEmployees.has(p.empId)) {
+          missingEmployees.set(p.empId, {
+            id: p.empId,
+            name: p.rawName || `Employee ${p.empId}`,
+            designation: p.designation || null,
+            category: p.category || 'staff',
+            salary: '0',
+            education: 'Graduate|Day',
+            join_date: null,
+            phone_number: null,
+            status: 'Active'
+          });
+        }
+      }
+
+      let newEmployeesCreated = 0;
+      if (missingEmployees.size > 0) {
+        const toInsert = Array.from(missingEmployees.values());
+        const { error: insErr } = await supabase.from('employees').insert(toInsert);
+        if (!insErr) {
+          toInsert.forEach(e => {
+            empIdSet.add(e.id);
+            cacheDbShift(e.id, 'Day');
+          });
+          newEmployeesCreated = toInsert.length;
+        } else {
+          // If bulk insert fails, try inserting row-by-row
+          for (const emp of toInsert) {
+            const { error: singleInsErr } = await supabase.from('employees').insert([emp]);
+            if (!singleInsErr) {
+              empIdSet.add(emp.id);
+              cacheDbShift(emp.id, 'Day');
+              newEmployeesCreated++;
+            }
+          }
+        }
+      }
+
+      // Auto-register missing locations
+      const missingLocs = new Map<string, any>();
+      for (const p of punches) {
+        if (p.locationRaw) {
+          const lower = p.locationRaw.toLowerCase();
+          if (!locIdSet.has(p.locationRaw) && !locNameMap.has(lower) && !missingLocs.has(lower)) {
+            const isNumeric = /^\d+$/.test(p.locationRaw);
+            missingLocs.set(lower, {
+              id: p.locationRaw,
+              name: isNumeric ? `Location ${p.locationRaw}` : p.locationRaw
+            });
+          }
+        }
+      }
+
+      if (missingLocs.size > 0) {
+        const toInsertLocs = Array.from(missingLocs.values());
+        const { error: insLocErr } = await supabase.from('locations').insert(toInsertLocs);
+        if (!insLocErr) {
+          toInsertLocs.forEach(l => {
+            locIdSet.add(l.id);
+            locNameMap.set(l.name.toLowerCase().trim(), l.id);
+          });
+        }
+      }
+
+      setUploadProgress(50);
+      setUploadStage('Grouping punches by shift date & calculating In/Out times...');
+
+      // Group punches by employee and shift date
+      const groupedData: Record<string, {
+        empId: string;
+        date: string;
+        punches: { time: Date; timeStr: string }[];
+        idKey: string | null;
+        locationId: string | null;
+      }> = {};
+
+      const distinctDatesSet = new Set<string>();
+
+      for (const p of punches) {
+        // Double check inactive employee filter
+        if (!isEmployeeActive({ id: p.empId, name: p.rawName })) continue;
+
+        const empShift = getEmployeeShift(p.empId);
+        const dateIso = getShiftDateForTime(p.punchDate, empShift);
+        if (!dateIso) continue;
+        distinctDatesSet.add(dateIso);
+
+        const key = `${p.empId}_${dateIso}`;
+
+        let resolvedLocId: string | null = null;
+        if (p.locationRaw) {
+          if (locIdSet.has(p.locationRaw)) resolvedLocId = p.locationRaw;
+          else if (locNameMap.has(p.locationRaw.toLowerCase())) {
+            resolvedLocId = locNameMap.get(p.locationRaw.toLowerCase()) || null;
+          }
+        }
+
+        if (!groupedData[key]) {
+          groupedData[key] = {
+            empId: p.empId,
+            date: dateIso,
+            punches: [],
+            idKey: p.designation || null,
+            locationId: resolvedLocId
+          };
+        } else if (resolvedLocId && !groupedData[key].locationId) {
+          groupedData[key].locationId = resolvedLocId;
+        }
+
+        groupedData[key].punches.push({
+          time: p.punchDate,
+          timeStr: p.timeStr
+        });
+      }
+
+      setUploadProgress(60);
+      setUploadStage('Checking existing attendance in database...');
+
+      const empIdsToFetch = Array.from(new Set(Object.values(groupedData).map(g => g.empId)));
+      const datesToFetch = Array.from(distinctDatesSet);
+
+      const existingMap: Record<string, any> = {};
+      if (empIdsToFetch.length > 0 && datesToFetch.length > 0) {
+        const fetchChunkSize = 80;
+        for (let i = 0; i < empIdsToFetch.length; i += fetchChunkSize) {
+          const slice = empIdsToFetch.slice(i, i + fetchChunkSize);
+          const { data: records, error: fetchErr } = await supabase
+            .from('attendance')
+            .select('*')
+            .in('employee_id', slice)
+            .in('date_iso', datesToFetch);
+          
+          if (!fetchErr && records) {
+            records.forEach((r: any) => {
+              const k = `${String(r.employee_id).trim()}_${normalizeToYYYYMMDD(r.date_iso || '')}`;
+              existingMap[k] = r;
+            });
+          }
+        }
+      }
+
+      setUploadProgress(70);
+      setUploadStage('Preparing attendance records for upsert...');
+
+      const rowsToUpsert: any[] = [];
+
+      for (const group of Object.values(groupedData)) {
+        const { empId, date: dateIso } = group;
+        if (!empIdSet.has(empId)) {
+          console.warn(`Skipping attendance upsert for employee ${empId}: not found in employees table.`);
+          continue;
+        }
+
+        const cleanDateIso = normalizeToYYYYMMDD(dateIso);
+        if (!cleanDateIso || !/^\d{4}-\d{2}-\d{2}$/.test(cleanDateIso)) {
+          console.warn(`Skipping attendance upsert for employee ${empId}: invalid date ${dateIso}`);
+          continue;
+        }
+
+        const key = `${empId}_${cleanDateIso}`;
+        const existing = existingMap[key];
+
+        // Sort punches chronologically
+        const sortedPunches = [...group.punches].sort((a, b) => a.time.getTime() - b.time.getTime());
+
+        // Extract first punch as In, last punch as Out
+        const inPunch = sortedPunches[0];
+        const outPunch = sortedPunches.length > 1 ? sortedPunches[sortedPunches.length - 1] : null;
+
+        const inTime = inPunch ? inPunch.timeStr : (existing?.sys_in_time || null);
+        const outTime = outPunch ? outPunch.timeStr : (existing?.sys_out_time || null);
+
+        // Location: ensure it's valid in locIdSet to avoid foreign key errors
+        let finalLocId = group.locationId || existing?.location_id || null;
+        if (finalLocId && !locIdSet.has(finalLocId)) {
+          finalLocId = null;
+        }
+
+        rowsToUpsert.push({
+          employee_id: empId,
+          date_iso: cleanDateIso,
+          sys_in_time: inTime,
+          sys_out_time: outTime,
+          manual_in_time: existing?.manual_in_time || inTime,
+          manual_out_time: existing?.manual_out_time || outTime,
+          id_number: group.idKey || existing?.id_number || null,
+          location_id: finalLocId,
+          status: (existing?.status && existing.status !== 'Absent') ? existing.status : 'Present',
+          live_location: existing?.live_location || null,
+          live_location_in: existing?.live_location_in || null,
+          live_location_out: existing?.live_location_out || null,
+          late_remark: existing?.late_remark || null
+        });
+      }
+
+      setUploadProgress(75);
+      setUploadStage('Upserting attendance records to Supabase...');
+
+      let recordsUpserted = 0;
+      let failedCount = 0;
+      const failedDetails: string[] = [];
+
+      const batchSize = 50;
+      for (let i = 0; i < rowsToUpsert.length; i += batchSize) {
+        const chunk = rowsToUpsert.slice(i, i + batchSize);
+        const { error: upsertErr } = await supabase
+          .from('attendance')
+          .upsert(chunk, { onConflict: 'employee_id,date_iso' });
+
+        if (!upsertErr) {
+          recordsUpserted += chunk.length;
+        } else {
+          console.warn('Batch upsert error, retrying individual rows:', upsertErr.message);
+          // Fallback: Retry rows individually to salvage all valid rows and pinpoint specific failures
+          for (const item of chunk) {
+            const { error: singleErr } = await supabase
+              .from('attendance')
+              .upsert([item], { onConflict: 'employee_id,date_iso' });
+            if (!singleErr) {
+              recordsUpserted++;
+            } else {
+              failedCount++;
+              if (failedDetails.length < 5) {
+                failedDetails.push(`Emp ${item.employee_id} (${item.date_iso}): ${singleErr.message}`);
+              }
+            }
+          }
+        }
+
+        const pct = 75 + Math.round(((i + chunk.length) / rowsToUpsert.length) * 22);
+        setUploadProgress(Math.min(97, pct));
+      }
+
+      setUploadProgress(98);
+      setUploadStage('Synchronizing dashboard data...');
+      await fetchData();
+
+      setUploadProgress(100);
+      setUploadStage('Upload finished!');
       setUploading(false);
+
+      const sampleDates = Array.from(distinctDatesSet).slice(0, 10);
+      const isOverallSuccess = recordsUpserted > 0;
+
+      setUploadResult({
+        success: isOverallSuccess,
+        totalRowsRead: rawRowsCount,
+        totalPunches: punches.length,
+        recordsUpserted,
+        failedCount,
+        skippedInactiveCount: skippedInactive,
+        newEmployeesCreated,
+        detectedHeaders: headers.filter(h => !h.startsWith('column_')),
+        sampleDates,
+        failedDetails: failedDetails.length > 0 ? failedDetails : undefined,
+        errorMessage: isOverallSuccess 
+          ? undefined 
+          : (failedDetails[0] || 'Could not save any attendance records. Please check Supabase table constraints.')
+      });
+
+      // Clear input so file can be uploaded again if needed
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+    } catch (err: any) {
+      console.error('File upload error:', err);
+      setUploading(false);
+      setUploadProgress(0);
+      setUploadResult({
+        success: false,
+        totalRowsRead: 0,
+        totalPunches: 0,
+        recordsUpserted: 0,
+        failedCount: 0,
+        skippedInactiveCount: 0,
+        newEmployeesCreated: 0,
+        detectedHeaders: [],
+        sampleDates: [],
+        errorMessage: 'Upload failed: ' + (err.message || 'Unknown parsing error')
+      });
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -917,9 +1009,12 @@ export default function App() {
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     <div className="space-y-4">
                       <h3 className="text-xs font-bold uppercase tracking-widest text-stone-500">Quick Actions</h3>
-                      <div className="grid grid-cols-2 gap-4">
-                        <button onClick={() => setActiveSection('attendance')} className="bg-stone-800 text-white p-4 text-xs font-bold uppercase hover:bg-stone-900 transition-colors">Daily Entry</button>
-                        <button onClick={() => setActiveSection('monthly')} className="bg-stone-200 text-stone-800 p-4 text-xs font-bold uppercase hover:bg-stone-300 transition-colors">Monthly Report</button>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <button onClick={() => setActiveSection('attendance')} className="bg-stone-800 text-white p-3 text-xs font-bold uppercase hover:bg-stone-900 transition-colors">Daily Entry</button>
+                        <button onClick={() => setActiveSection('visitors')} className="bg-amber-500 text-stone-900 p-3 text-xs font-bold uppercase hover:bg-amber-600 transition-colors flex items-center justify-center gap-1.5 shadow-sm">
+                          <UserCheck size={14} /> Visitor In-Out
+                        </button>
+                        <button onClick={() => setActiveSection('monthly')} className="bg-stone-200 text-stone-800 p-3 text-xs font-bold uppercase hover:bg-stone-300 transition-colors">Monthly Report</button>
                       </div>
                       
                       {viewMode === 'admin' && (
@@ -936,22 +1031,32 @@ export default function App() {
         {activeSection === 'employees' && <EmployeeSection employees={employees} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'locations' && <LocationSection locations={locations} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'attendance' && <AttendanceSection attendance={attendance} employees={employees.filter(isEmployeeActive)} locations={locations} viewMode={viewMode} onUpdateAttendance={async (r) => {
+            const cleanDate = normalizeToYYYYMMDD(r.date);
+            const empId = String(r.empId).trim();
+            if (!empId || !cleanDate) return;
+
             // First find existing to preserve live_location, handling legacy date formats
             const { data: existingRecords } = await supabase
                 .from('attendance')
                 .select('*')
-                .eq('employee_id', String(r.empId).trim())
-                .in('date_iso', getPossibleDateFormats(r.date));
+                .eq('employee_id', empId)
+                .in('date_iso', getPossibleDateFormats(cleanDate));
                 
             const existing = existingRecords && existingRecords.length > 0 ? existingRecords[0] : null;
+
+            // Validate location foreign key
+            let locId = r.locationId ? String(r.locationId).trim() : null;
+            if (locId && !locations.some(l => l.id === locId)) {
+                locId = null;
+            }
             
             const { error } = await supabase.from('attendance').upsert([{ 
-                employee_id: String(r.empId).trim(), 
-                date_iso: r.date, 
+                employee_id: empId, 
+                date_iso: cleanDate, 
                 manual_in_time: r.inTime || null, 
                 manual_out_time: r.outTime || null, 
-                location_id: r.locationId || null,
-                id_number: existing?.idNumber || String(r.empId).trim(),
+                location_id: locId,
+                id_number: existing?.id_number || empId,
                 live_location: existing?.live_location || null,
                 live_location_in: existing?.live_location_in || null,
                 live_location_out: existing?.live_location_out || null,
@@ -961,15 +1066,24 @@ export default function App() {
             
             if (error) {
                 console.error('Save error:', error);
-                alert('Database Error: ' + error.message + '\n\nPlease ensure your Supabase table has a unique constraint on (employee_id, date_iso).');
+                alert('Database Error: ' + error.message);
             } else {
                 await fetchData();
-                // We don't alert here to avoid annoying the user on every row save if they are doing it many times,
-                // but let's at least show a console log or small toast if we had one.
-                console.log('Saved attendance for', r.empId);
+                console.log('Saved attendance for', empId);
             }
         }} />}
-        {activeSection === 'upload' && <UploadSection onUpload={handleFileUpload} inputRef={fileInputRef} uploading={uploading} progress={uploadProgress} />}
+        {activeSection === 'upload' && (
+          <UploadSection 
+            onUpload={handleFileUpload} 
+            inputRef={fileInputRef} 
+            uploading={uploading} 
+            progress={uploadProgress} 
+            uploadStage={uploadStage}
+            uploadResult={uploadResult}
+            onClearResult={() => setUploadResult(null)}
+            onNavigateToAttendance={() => setActiveSection('attendance')}
+          />
+        )}
         {activeSection === 'comparison' && viewMode === 'admin' && (
           <ComparisonSection 
             employees={employees.filter(isEmployeeActive)} 
@@ -979,6 +1093,12 @@ export default function App() {
               setPreSelectedEmployeeId(empId);
               setActiveSection('dashboard');
             }}
+          />
+        )}
+        {activeSection === 'visitors' && (
+          <VisitorSection 
+            employees={employees.filter(isEmployeeActive)} 
+            viewMode={viewMode} 
           />
         )}
         {activeSection === 'monthly' && <MonthlyReportSection employees={employees.filter(isEmployeeActive)} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
