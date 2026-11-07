@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Table, Upload, Menu, X, UserCheck } from 'lucide-react';
+import { Table, Upload, Menu, X, UserCheck, ExternalLink, Copy, Check } from 'lucide-react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import { checkConnection, supabase } from './lib/supabaseClient';
@@ -81,10 +81,44 @@ export const isSecurityEmployee = (emp: any) => {
   return !isStaffEmployee(emp);
 };
 
+export const checkIsVisitorRoute = () => {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname.toLowerCase();
+  const search = window.location.search.toLowerCase();
+  const hash = window.location.hash.toLowerCase();
+  return (
+    path === '/visitors' || 
+    path === '/visitor' || 
+    path.startsWith('/visitors/') ||
+    path.startsWith('/visitor/') ||
+    search.includes('page=visitors') || 
+    search.includes('page=visitor') || 
+    search.includes('view=visitor') ||
+    hash === '#/visitors' || 
+    hash === '#/visitor' ||
+    hash === '#visitors' ||
+    hash === '#visitor'
+  );
+};
+
 export default function App() {
   const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
   const [activeSection, setActiveSection] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isVisitorStandalone, setIsVisitorStandalone] = useState(checkIsVisitorRoute());
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  useEffect(() => {
+    const onLocationChange = () => {
+      setIsVisitorStandalone(checkIsVisitorRoute());
+    };
+    window.addEventListener('popstate', onLocationChange);
+    window.addEventListener('hashchange', onLocationChange);
+    return () => {
+      window.removeEventListener('popstate', onLocationChange);
+      window.removeEventListener('hashchange', onLocationChange);
+    };
+  }, []);
   
   const [showProgress, setShowProgress] = useState(false);
   const [showList, setShowList] = useState<'present' | 'absent' | 'present-staff' | 'absent-staff' | 'present-security' | 'absent-security' | null>(null);
@@ -794,8 +828,68 @@ export default function App() {
         </div>
       </div>
     </div>
-  );
-};
+    );
+  };
+
+  if (isVisitorStandalone) {
+    const directVisitorUrl = typeof window !== 'undefined' ? `${window.location.origin}/visitors` : '/visitors';
+    return (
+      <div className="bg-stone-100 min-h-screen text-stone-900 font-sans">
+        {/* Dedicated Gate Visitor Header */}
+        <header className="bg-stone-900 text-white px-3 sm:px-6 py-3 shadow-md flex justify-between items-center sticky top-0 z-30 border-b border-stone-800">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded bg-amber-500 text-stone-950 font-black text-sm flex items-center justify-center shrink-0">
+              <UserCheck size={18} />
+            </div>
+            <div>
+              <h1 className="text-xs sm:text-sm font-black tracking-wider uppercase text-white">
+                WINDY GROUP &bull; GATE VISITOR REGISTER
+              </h1>
+              <p className="text-[10px] text-amber-400 font-medium">
+                ভিজিটর ইন-আউট গেট ম্যানেজমেন্ট (আলাদা লিংক)
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            {/* Share / Copy direct link button */}
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(directVisitorUrl);
+                setCopiedLink(true);
+                setTimeout(() => setCopiedLink(false), 2500);
+              }}
+              className="flex items-center gap-1.5 bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 px-3 py-1.5 rounded font-bold cursor-pointer text-[11px]"
+              title="সিকিউরিটিকে দেওয়ার জন্য এই লিংকটি কপি করুন"
+            >
+              {copiedLink ? <Check size={14} className="text-emerald-400" /> : <Copy size={13} className="text-amber-400" />}
+              <span>{copiedLink ? 'কপি হয়েছে!' : 'লিংক কপি'}</span>
+            </button>
+
+            {/* Switch to Main HR App */}
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/');
+                setIsVisitorStandalone(false);
+              }}
+              className="text-[11px] text-stone-400 hover:text-white underline ml-1 cursor-pointer"
+              title="মূল HR এটেন্ডেন্স সিস্টেমে ফিরে যান"
+            >
+              মূল HR অ্যাপ &rarr;
+            </button>
+          </div>
+        </header>
+
+        {/* Standalone Visitor View - Full width without HR sidebar */}
+        <main className="max-w-5xl mx-auto p-2 sm:p-4 md:p-6">
+          <VisitorSection 
+            employees={employees.filter(isEmployeeActive)} 
+            viewMode="user" 
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
       <div className="flex bg-stone-100 min-h-screen relative overflow-x-hidden">
@@ -1011,9 +1105,13 @@ export default function App() {
                       <h3 className="text-xs font-bold uppercase tracking-widest text-stone-500">Quick Actions</h3>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <button onClick={() => setActiveSection('attendance')} className="bg-stone-800 text-white p-3 text-xs font-bold uppercase hover:bg-stone-900 transition-colors">Daily Entry</button>
-                        <button onClick={() => setActiveSection('visitors')} className="bg-amber-500 text-stone-900 p-3 text-xs font-bold uppercase hover:bg-amber-600 transition-colors flex items-center justify-center gap-1.5 shadow-sm">
-                          <UserCheck size={14} /> Visitor In-Out
-                        </button>
+                        {viewMode === 'admin' ? (
+                          <button onClick={() => setActiveSection('visitors')} className="bg-amber-500 text-stone-900 p-3 text-xs font-bold uppercase hover:bg-amber-600 transition-colors flex items-center justify-center gap-1.5 shadow-sm">
+                            <UserCheck size={14} /> Visitor In-Out
+                          </button>
+                        ) : (
+                          <button onClick={() => setActiveSection('timecard')} className="bg-stone-800 text-white p-3 text-xs font-bold uppercase hover:bg-stone-900 transition-colors">Time Card</button>
+                        )}
                         <button onClick={() => setActiveSection('monthly')} className="bg-stone-200 text-stone-800 p-3 text-xs font-bold uppercase hover:bg-stone-300 transition-colors">Monthly Report</button>
                       </div>
                       
@@ -1095,11 +1193,48 @@ export default function App() {
             }}
           />
         )}
-        {activeSection === 'visitors' && (
-          <VisitorSection 
-            employees={employees.filter(isEmployeeActive)} 
-            viewMode={viewMode} 
-          />
+        {activeSection === 'visitors' && viewMode === 'admin' && (
+          <div className="space-y-4">
+            <div className="bg-amber-500/15 border-l-4 border-amber-500 p-3.5 rounded-r shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping shrink-0" />
+                <div>
+                  <h3 className="text-xs font-black uppercase text-amber-950">
+                    গেট সিকিউরিটির জন্য আলাদা ডেডিকেটেড লিংক প্রস্তুত আছে
+                  </h3>
+                  <p className="text-[11px] text-stone-700 mt-0.5">
+                    সিকিউরিটি গার্ডদের মূল HR ড্যাশবোর্ড না দিয়ে সরাসরি এই আলাদা লিংকটি দিয়ে দিন: <strong className="font-mono text-stone-900 bg-white/80 px-1 py-0.5 rounded border border-amber-300">/visitors</strong>
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  onClick={() => {
+                    const url = `${window.location.origin}/visitors`;
+                    navigator.clipboard.writeText(url);
+                    alert(`আলাদা ভিজিটর লিংক কপি করা হয়েছে:\n${url}\n\nএটি সিকিউরিটি গার্ডকে পাঠাতে পারেন।`);
+                  }}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-1 bg-white hover:bg-stone-100 text-stone-800 border border-stone-300 px-3 py-1.5 rounded text-xs font-bold shadow-xs cursor-pointer"
+                >
+                  <Copy size={13} className="text-amber-600" />
+                  <span>লিংক কপি</span>
+                </button>
+                <a
+                  href="/visitors"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-1 bg-stone-900 hover:bg-black text-white px-3 py-1.5 rounded text-xs font-bold shadow-xs cursor-pointer"
+                >
+                  <ExternalLink size={13} className="text-amber-400" />
+                  <span>আলাদা উইন্ডোতে খুলুন</span>
+                </a>
+              </div>
+            </div>
+            <VisitorSection 
+              employees={employees.filter(isEmployeeActive)} 
+              viewMode={viewMode} 
+            />
+          </div>
         )}
         {activeSection === 'monthly' && <MonthlyReportSection employees={employees.filter(isEmployeeActive)} attendance={attendance} onRefresh={fetchData} viewMode={viewMode} />}
         {activeSection === 'timecard' && <TimeCardSection employees={employees.filter(isEmployeeActive)} attendance={attendance} locations={locations} onRefresh={fetchData} viewMode={viewMode} />}

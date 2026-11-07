@@ -5,12 +5,6 @@ import {
   Search, 
   Calendar, 
   Clock, 
-  Mail, 
-  Send, 
-  FileSpreadsheet, 
-  FileDown, 
-  CheckCircle2, 
-  AlertCircle, 
   LogOut, 
   Edit2, 
   Trash2, 
@@ -20,19 +14,13 @@ import {
   Building,
   User,
   Phone,
-  Briefcase,
-  Copy,
   MessageCircle,
-  Share2,
   Check,
-  Smartphone,
-  ExternalLink,
-  ChevronDown,
-  ChevronUp,
-  LayoutGrid,
-  Table as TableIcon,
-  Zap,
-  ArrowRight
+  CheckCircle2,
+  AlertCircle,
+  FileSpreadsheet,
+  FileDown,
+  Copy
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
@@ -63,7 +51,6 @@ interface Props {
 }
 
 const LOCAL_STORAGE_KEY = 'hr_visitors_db_records';
-const DEFAULT_USER_EMAIL = '017mattakin@gmail.com';
 
 const formatCurrentTime = (): string => {
   const now = new Date();
@@ -83,25 +70,25 @@ const getTodayString = (): string => {
   return `${y}-${m}-${day}`;
 };
 
-// Clean and format phone number for WhatsApp wa.me / api.whatsapp.com links
+// Clean phone number for WhatsApp wa.me / api.whatsapp.com
 const formatWhatsAppPhone = (phone: string): string => {
   if (!phone) return '';
   let clean = phone.replace(/[^0-9]/g, '');
   if (clean.startsWith('0')) {
-    clean = '88' + clean; // Bangladesh country code prefix
+    clean = '88' + clean; // Bangladesh prefix
   }
   return clean;
 };
 
-// Common quick purpose chips for rapid 1-tap entry on mobile
-const QUICK_PURPOSE_OPTIONS = [
+// Fast 1-tap purpose options for mobile
+const QUICK_PURPOSES = [
   'অফিসিয়াল মিটিং',
   'ইন্টারভিউ',
   'মাল ডেলিভারি',
   'স্যাম্পল প্রদান',
   'বিল / চালান জমা',
   'সার্ভিস / মেরামত',
-  'ফ্যাক্টরি পরিদর্শন'
+  'পরিদর্শন'
 ];
 
 export default function VisitorSection({ employees = [], viewMode }: Props) {
@@ -109,37 +96,22 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
   const [loading, setLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>(getTodayString());
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Inside' | 'Checked Out'>('All');
-  
-  // View Toggle: Mobile Cards vs Desktop Table
-  const [viewLayout, setViewLayout] = useState<'cards' | 'table'>('cards');
   
   // Modals
-  const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [showDailyReportModal, setShowDailyReportModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [showSendSuccessModal, setShowSendSuccessModal] = useState<VisitorRecord | null>(null);
   
-  // Quick Mobile Inline Entry Collapsible Form
-  const [showInlineMobileEntry, setShowInlineMobileEntry] = useState(false);
-
-  // 1. Current User / Operator Email (স্বয়ংক্রিয়ভাবে সেভ থাকবে)
-  const [currentUserEmail, setCurrentUserEmail] = useState<string>(() => {
-    return localStorage.getItem('saved_operator_user_email') || DEFAULT_USER_EMAIL;
+  // Operator Identity
+  const [operatorIdentity, setOperatorIdentity] = useState<string>(() => {
+    return localStorage.getItem('saved_operator_user_email') || 'Gate Security';
   });
 
-  // 2. Admin Recipient Email(s) (কমা দিয়ে একাধিক)
-  const [adminRecipientEmails, setAdminRecipientEmails] = useState<string>(() => {
-    return localStorage.getItem('admin_recipient_emails') || '017mattakin@gmail.com';
-  });
-
-  // 3. Admin WhatsApp Number
+  // Admin WhatsApp Number (একমাত্র প্রয়োজনীয় কনফিগারেশন)
   const [adminWhatsAppNumber, setAdminWhatsAppNumber] = useState<string>(() => {
-    return localStorage.getItem('admin_whatsapp_number') || '01711000000';
+    return localStorage.getItem('admin_whatsapp_number') || '017mattakin@gmail.com';
   });
 
-  // Form State
+  // Clean form state for quick mobile entry
   const [formData, setFormData] = useState<Partial<VisitorRecord>>({
     sl: 1,
     date: getTodayString(),
@@ -155,31 +127,26 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
     remarks: ''
   });
   
-  const [editingId, setEditingId] = useState<string | number | null>(null);
+  const [editingRecord, setEditingRecord] = useState<VisitorRecord | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-  const [copiedSql, setCopiedSql] = useState(false);
-  const [copiedReport, setCopiedReport] = useState(false);
 
   useEffect(() => {
     fetchVisitors();
   }, []);
 
-  // Save Settings to LocalStorage
-  const handleSaveSettings = (uEmail: string, aEmails: string, waNum: string) => {
-    setCurrentUserEmail(uEmail);
-    setAdminRecipientEmails(aEmails);
+  // Save Settings
+  const handleSaveSettings = (opId: string, waNum: string) => {
+    setOperatorIdentity(opId);
     setAdminWhatsAppNumber(waNum);
-
-    localStorage.setItem('saved_operator_user_email', uEmail);
-    localStorage.setItem('admin_recipient_emails', aEmails);
+    localStorage.setItem('saved_operator_user_email', opId);
     localStorage.setItem('admin_whatsapp_number', waNum);
 
-    setActionMessage({ type: 'success', text: 'সেটিংস সেভ হয়েছে! কোনো API এর প্রয়োজন নেই।' });
+    setActionMessage({ type: 'success', text: 'WhatsApp নম্বর সফলভাবে সেভ হয়েছে।' });
     setShowSettingsModal(false);
-    setTimeout(() => setActionMessage(null), 4000);
+    setTimeout(() => setActionMessage(null), 3000);
   };
 
-  // Fetch visitors from Supabase with localStorage synchronization
+  // Fetch visitors
   const fetchVisitors = async () => {
     setLoading(true);
     let loadedFromDb = false;
@@ -213,101 +180,54 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
         loadedFromDb = true;
       }
     } catch (err) {
-      console.warn('Supabase visitors table not ready, using local storage:', err);
+      console.warn('Supabase fetch fallback:', err);
     }
 
     if (!loadedFromDb) {
       const local = localStorage.getItem(LOCAL_STORAGE_KEY);
       if (local) {
         try {
-          const parsed = JSON.parse(local);
-          setVisitors(parsed);
+          setVisitors(JSON.parse(local));
         } catch (e) {
-          console.error('Error parsing local visitors:', e);
+          console.error(e);
         }
-      } else {
-        const sampleRecords: VisitorRecord[] = [
-          {
-            id: 'sample-1',
-            sl: 1,
-            date: getTodayString(),
-            visitor_name: 'Anisur Rahman',
-            company_name: 'Fabrics World Ltd.',
-            who_meet: 'MD. GHULAM KEBRIA (AGM)',
-            purpose: 'Yarn & Fabric Quality Inspection Meeting',
-            in_time: '09:30 AM',
-            out_time: '',
-            phone_number: '01711-234567',
-            id_card_no: 'V-101',
-            status: 'Inside',
-            remarks: 'Samples handed over'
-          },
-          {
-            id: 'sample-2',
-            sl: 2,
-            date: getTodayString(),
-            visitor_name: 'Kabir Hossain',
-            company_name: 'Siemens Energy BD',
-            who_meet: 'MD. FARHAD SIKDER',
-            purpose: 'Substation Electrical Maintenance Review',
-            in_time: '10:15 AM',
-            out_time: '12:00 PM',
-            phone_number: '01819-876543',
-            id_card_no: 'V-102',
-            status: 'Checked Out',
-            remarks: 'Service complete'
-          }
-        ];
-        setVisitors(sampleRecords);
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sampleRecords));
       }
     }
     setLoading(false);
   };
 
-  // Save visitor record helper
-  const saveVisitorRecord = async (
-    record: Partial<VisitorRecord>, 
-    isNew: boolean, 
-    instantAction?: 'whatsapp' | 'email'
-  ): Promise<VisitorRecord> => {
-    let newRecord: VisitorRecord;
-
-    if (currentUserEmail) {
-      localStorage.setItem('saved_operator_user_email', currentUserEmail);
+  // Save new visitor
+  const handleSaveNewVisitor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.company_name?.trim() || !formData.who_meet?.trim() || !formData.purpose?.trim()) {
+      alert('অনুগ্রহ করে কোম্পানির নাম, কার সাথে দেখা করবেন ও উদ্দেশ্য পূরণ করুন।');
+      return;
     }
 
-    if (isNew) {
-      const dateRecords = visitors.filter(v => v.date === (record.date || getTodayString()));
-      const nextSl = dateRecords.length > 0 ? Math.max(...dateRecords.map(r => r.sl)) + 1 : 1;
-      
-      newRecord = {
-        id: record.id || `v_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-        sl: record.sl || nextSl,
-        date: record.date || getTodayString(),
-        visitor_name: record.visitor_name || '',
-        company_name: record.company_name || '',
-        who_meet: record.who_meet || '',
-        purpose: record.purpose || '',
-        in_time: record.in_time || formatCurrentTime(),
-        out_time: record.out_time || '',
-        phone_number: record.phone_number || '',
-        id_card_no: record.id_card_no || '',
-        status: record.out_time ? 'Checked Out' : 'Inside',
-        remarks: record.remarks || '',
-        created_at: new Date().toISOString()
-      };
-    } else {
-      newRecord = {
-        ...(visitors.find(v => v.id === editingId) as VisitorRecord),
-        ...record,
-        status: record.out_time ? 'Checked Out' : 'Inside'
-      };
-    }
+    const targetDate = formData.date || getTodayString();
+    const dateRecords = visitors.filter(v => v.date === targetDate);
+    const nextSl = dateRecords.length > 0 ? Math.max(...dateRecords.map(r => r.sl)) + 1 : 1;
 
-    // Try saving to Supabase
+    const newRecord: VisitorRecord = {
+      id: `v_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      sl: nextSl,
+      date: targetDate,
+      visitor_name: formData.visitor_name?.trim() || '',
+      company_name: formData.company_name.trim(),
+      who_meet: formData.who_meet.trim(),
+      purpose: formData.purpose.trim(),
+      in_time: formData.in_time?.trim() || formatCurrentTime(),
+      out_time: '',
+      phone_number: formData.phone_number?.trim() || '',
+      id_card_no: formData.id_card_no?.trim() || '',
+      status: 'Inside',
+      remarks: formData.remarks || '',
+      created_at: new Date().toISOString()
+    };
+
+    // Save to Supabase
     try {
-      const dbPayload = {
+      const { data, error } = await supabase.from('visitors').insert([{
         sl: newRecord.sl,
         date: newRecord.date,
         visitor_name: newRecord.visitor_name,
@@ -315,59 +235,28 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
         who_meet: newRecord.who_meet,
         purpose: newRecord.purpose,
         in_time: newRecord.in_time,
-        out_time: newRecord.out_time || null,
+        out_time: null,
         phone_number: newRecord.phone_number,
         id_card_no: newRecord.id_card_no,
-        status: newRecord.status,
+        status: 'Inside',
         remarks: newRecord.remarks
-      };
+      }]).select();
 
-      if (isNew) {
-        const { data, error } = await supabase.from('visitors').insert([dbPayload]).select();
-        if (!error && data && data[0]) {
-          newRecord.id = data[0].id;
-        }
-      } else if (newRecord.id && typeof newRecord.id === 'number') {
-        await supabase.from('visitors').update(dbPayload).eq('id', newRecord.id);
+      if (!error && data && data[0]) {
+        newRecord.id = data[0].id;
       }
-    } catch (e) {
-      console.warn('Supabase write fallback to local storage:', e);
+    } catch (err) {
+      console.warn('Supabase insert fallback to local storage:', err);
     }
 
-    // Update Local State & LocalStorage
-    let updatedList: VisitorRecord[];
-    if (isNew) {
-      updatedList = [newRecord, ...visitors];
-    } else {
-      updatedList = visitors.map(v => v.id === newRecord.id ? newRecord : v);
-    }
+    const updated = [newRecord, ...visitors];
+    setVisitors(updated);
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
 
-    setVisitors(updatedList);
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
-
-    // Handle instant Action if user selected "Save & Send"
-    if (instantAction === 'whatsapp') {
-      handleOpenWhatsAppForVisitor(newRecord);
-      setActionMessage({ type: 'success', text: 'ভিজিটর সেভ হয়েছে এবং WhatsApp মেসেজ ওপেন হয়েছে।' });
-      setTimeout(() => setActionMessage(null), 4000);
-    } else if (instantAction === 'email') {
-      handleOpenEmailForVisitor(newRecord);
-      setActionMessage({ type: 'success', text: 'ভিজিটর সেভ হয়েছে এবং মেইল ওপেন হয়েছে।' });
-      setTimeout(() => setActionMessage(null), 4000);
-    } else if (isNew) {
-      // Show instant Share Modal
-      setShowSendSuccessModal(newRecord);
-    } else {
-      setActionMessage({ type: 'success', text: 'ভিজিটর তথ্য সফলভাবে আপডেট হয়েছে।' });
-      setTimeout(() => setActionMessage(null), 4000);
-    }
-
-    // Reset Form for next quick entry
-    const nextDateRecords = updatedList.filter(v => v.date === (record.date || getTodayString()));
-    const nextSlVal = nextDateRecords.length > 0 ? Math.max(...nextDateRecords.map(r => r.sl)) + 1 : 1;
+    // Clear form inputs for next entry
     setFormData({
-      sl: nextSlVal,
-      date: selectedDate || getTodayString(),
+      sl: nextSl + 1,
+      date: targetDate,
       visitor_name: '',
       company_name: '',
       who_meet: '',
@@ -380,131 +269,154 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
       remarks: ''
     });
 
-    return newRecord;
+    setActionMessage({ 
+      type: 'success', 
+      text: `✅ ${newRecord.company_name} - ভিজিটর এন্ট্রি সংরক্ষিত হয়েছে এবং উপরের "ভিতরে আছেন" লিস্টে যোগ হয়েছে।` 
+    });
+    setTimeout(() => setActionMessage(null), 3500);
   };
 
-  // Generate Email Content for a Single Visitor
-  const getVisitorEmailContent = (v: VisitorRecord) => {
-    const isExit = Boolean(v.out_time);
-    const subject = isExit 
-      ? `[Windy Group] ভিজিটর প্রস্থান: ${v.company_name} - ${v.visitor_name || 'Visitor'}` 
-      : `[Windy Group] নতুন ভিজিটর আগমন: ${v.company_name} - ${v.visitor_name || 'Visitor'}`;
-
-    const body = 
-`WINDY GROUP - ভিজিটর এন্ট্রি বিজ্ঞপ্তি
---------------------------------------------------
-ক্রমিক নং (SL)          : ${v.sl}
-তারিখ (Date)            : ${v.date}
-কোম্পানির নাম (Company)    : ${v.company_name}
-ভিজিটরের নাম (Visitor)    : ${v.visitor_name || '-'}
-মোবাইল নম্বর (Phone)      : ${v.phone_number || '-'}
-কার সাথে সাক্ষাৎ (Who Meet): ${v.who_meet}
-উদ্দেশ্য (Purpose)        : ${v.purpose}
-প্রবেশের সময় (In Time)    : ${v.in_time}
-বের হওয়ার সময় (Out Time)  : ${v.out_time || 'ভিতরে আছেন (Inside)'}
-পাস নং (Pass/Card)        : ${v.id_card_no || '-'}
---------------------------------------------------
-এন্ট্রি করেছেন (Operator)  : ${currentUserEmail}
-প্রাপক এডমিন             : ${adminRecipientEmails}`;
-
-    return { subject, body };
-  };
-
-  // Open Standard Mailto
-  const handleOpenEmailForVisitor = (v: VisitorRecord) => {
-    const { subject, body } = getVisitorEmailContent(v);
-    const recipients = adminRecipientEmails.trim();
-    const mailtoUrl = `mailto:${recipients}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(mailtoUrl, '_blank');
-  };
-
-  // Direct Gmail Web Compose
-  const handleOpenGmailWebForVisitor = (v: VisitorRecord) => {
-    const { subject, body } = getVisitorEmailContent(v);
-    const recipients = adminRecipientEmails.trim();
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recipients)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.open(gmailUrl, '_blank');
-  };
-
-  // Generate WhatsApp text for a Single Visitor
-  const getVisitorWhatsAppText = (v: VisitorRecord): string => {
-    const isExit = Boolean(v.out_time);
-    return (
-`*${isExit ? '🚪 WINDY GROUP - ভিজিটর প্রস্থান বিজ্ঞপ্তি' : '🚨 WINDY GROUP - নতুন ভিজিটর আগমন বিজ্ঞপ্তি'}*
-━━━━━━━━━━━━━━━━━━
-📌 *SL:* ${v.sl}
-📅 *তারিখ:* ${v.date}
-🏢 *কোম্পানি:* ${v.company_name}
-👤 *ভিজিটর:* ${v.visitor_name || 'Visitor'} ${v.phone_number ? `(${v.phone_number})` : ''}
-🎯 *কার সাথে সাক্ষাৎ:* ${v.who_meet}
-📝 *উদ্দেশ্য:* ${v.purpose}
-⏰ *প্রবেশের সময়:* ${v.in_time}
-🚪 *বের হওয়ার সময়:* ${v.out_time || 'ভিতরে আছেন (Inside)'}
-${v.id_card_no ? `🎫 *পাস নং:* ${v.id_card_no}\n` : ''}━━━━━━━━━━━━━━━━━━
-👤 *এন্ট্রি করেছেন:* ${currentUserEmail}`
-    );
-  };
-
-  // Open WhatsApp to send to Admin
-  const handleOpenWhatsAppForVisitor = (v: VisitorRecord) => {
-    const text = getVisitorWhatsAppText(v);
-    const cleanPhone = formatWhatsAppPhone(adminWhatsAppNumber);
-    const waUrl = cleanPhone 
-      ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(text)}`
-      : `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
-    window.open(waUrl, '_blank');
-  };
-
-  // Quick 1-Click Out-Time (Check Out) Handler
+  // 1-CLICK OUT: Immediately records exit time and removes the visitor from the top Inside list!
   const handleQuickCheckout = async (record: VisitorRecord) => {
-    const outTimeStr = formatCurrentTime();
+    const exitTime = formatCurrentTime();
     const updatedRecord: VisitorRecord = {
       ...record,
-      out_time: outTimeStr,
+      out_time: exitTime,
       status: 'Checked Out'
     };
 
+    // Update in Supabase
     try {
       if (typeof record.id === 'number') {
         await supabase.from('visitors').update({
-          out_time: outTimeStr,
+          out_time: exitTime,
           status: 'Checked Out'
         }).eq('id', record.id);
       }
-    } catch (e) {
-      console.warn('Supabase checkout update error:', e);
+    } catch (err) {
+      console.warn('Supabase checkout error:', err);
     }
 
+    // Update local state: removes from top 'Inside' list
     const updatedList = visitors.map(v => v.id === record.id ? updatedRecord : v);
     setVisitors(updatedList);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
 
-    // Show popup offering to share out time
-    setShowSendSuccessModal(updatedRecord);
+    setActionMessage({ 
+      type: 'info', 
+      text: `🚪 ${record.company_name} এর প্রস্থান সম্পন্ন হয়েছে (আউট সময়: ${exitTime})। ড্যাশবোর্ড থেকে সরানো হয়েছে।` 
+    });
+    setTimeout(() => setActionMessage(null), 3500);
   };
 
-  // Delete Record Handler
+  // Update existing record
+  const handleUpdateRecord = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRecord) return;
+
+    try {
+      if (typeof editingRecord.id === 'number') {
+        await supabase.from('visitors').update({
+          sl: editingRecord.sl,
+          date: editingRecord.date,
+          visitor_name: editingRecord.visitor_name,
+          company_name: editingRecord.company_name,
+          who_meet: editingRecord.who_meet,
+          purpose: editingRecord.purpose,
+          in_time: editingRecord.in_time,
+          out_time: editingRecord.out_time || null,
+          phone_number: editingRecord.phone_number,
+          id_card_no: editingRecord.id_card_no,
+          status: editingRecord.out_time ? 'Checked Out' : 'Inside',
+          remarks: editingRecord.remarks
+        }).eq('id', editingRecord.id);
+      }
+    } catch (e) {
+      console.warn('Supabase update fallback:', e);
+    }
+
+    const updated = visitors.map(v => v.id === editingRecord.id ? editingRecord : v);
+    setVisitors(updated);
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+    setShowEditModal(false);
+    setEditingRecord(null);
+
+    setActionMessage({ type: 'success', text: 'ভিজিটর তথ্য আপডেট হয়েছে।' });
+    setTimeout(() => setActionMessage(null), 3000);
+  };
+
+  // Delete Record
   const handleDelete = async (id: string | number) => {
-    if (!window.confirm('আপনি কি নিশ্চিত যে এই এন্ট্রিটি ডিলিট করতে চান?')) return;
+    if (!window.confirm('আপনি কি এই ভিজিটর এন্ট্রি ডিলিট করতে চান?')) return;
 
     try {
       if (typeof id === 'number') {
         await supabase.from('visitors').delete().eq('id', id);
       }
-    } catch (e) {
-      console.warn('Supabase delete error:', e);
+    } catch (err) {
+      console.warn('Supabase delete error:', err);
     }
 
     const updated = visitors.filter(v => v.id !== id);
     setVisitors(updated);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
 
-    setActionMessage({ type: 'info', text: 'ভিজিটর রেকর্ড ডিলিট করা হয়েছে।' });
+    setActionMessage({ type: 'info', text: 'রেকর্ড মুছে ফেলা হয়েছে।' });
     setTimeout(() => setActionMessage(null), 3000);
   };
 
-  // Filter visitors by Date, Search, and Status
-  const filteredVisitors = visitors.filter(v => {
+  // =========================================================================
+  // ⚡ 1-CLICK WHATSAPP TOTAL SUMMARY (ফুটারের একমাত্র বাটন - চাপলেই আজকের রিপোর্ট)
+  // =========================================================================
+  const handleSendTodayWhatsAppSummary = () => {
+    const todayStr = getTodayString();
+    const todayRecords = visitors.filter(v => v.date === todayStr);
+
+    if (todayRecords.length === 0) {
+      alert(`আজকের (${todayStr}) তারিখে এখনো কোনো ভিজিটর এন্ট্রি করা হয়নি।`);
+      return;
+    }
+
+    const insideCount = todayRecords.filter(v => !v.out_time || v.status === 'Inside').length;
+    const outCount = todayRecords.length - insideCount;
+
+    // Sort by SL
+    const sorted = [...todayRecords].sort((a, b) => a.sl - b.sl);
+
+    const listLines = sorted.map(v => {
+      const exitStr = v.out_time ? `আউট: ${v.out_time}` : `ভিতরে আছেন 🔴`;
+      const nameStr = v.visitor_name ? ` (${v.visitor_name})` : '';
+      return `${v.sl}. *${v.company_name}*${nameStr}\n   সাক্ষাৎ: ${v.who_meet}\n   ইন: ${v.in_time} | ${exitStr}\n   উদ্দেশ্য: ${v.purpose}`;
+    });
+
+    const summaryText = 
+`*📋 WINDY GROUP - আজকের সম্পূর্ণ ভিজিটর রিপোর্ট*
+📅 *তারিখ:* ${todayStr}
+📊 *মোট ভিজিটর:* ${todayRecords.length} জন
+🔴 *ভিতরে আছেন:* ${insideCount} জন
+🟢 *প্রস্থান সম্পন্ন:* ${outCount} জন
+━━━━━━━━━━━━━━━━━━
+${listLines.join('\n\n')}
+━━━━━━━━━━━━━━━━━━
+👤 *প্রেরক:* ${operatorIdentity}`;
+
+    const cleanPhone = formatWhatsAppPhone(adminWhatsAppNumber);
+    const waUrl = cleanPhone 
+      ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(summaryText)}`
+      : `https://api.whatsapp.com/send?text=${encodeURIComponent(summaryText)}`;
+    
+    window.open(waUrl, '_blank');
+  };
+
+  // Filter visitors
+  const todayDateStr = getTodayString();
+  const todayAllVisitors = visitors.filter(v => v.date === (selectedDate || todayDateStr));
+
+  // 1. ACTIVE VISITORS CURRENTLY INSIDE (যাঁরা এখনো বের হননি - উপরে থাকবেন)
+  const currentlyInsideVisitors = visitors.filter(v => (!v.out_time || v.status === 'Inside'));
+
+  // 2. Filtered history list
+  const historyVisitors = visitors.filter(v => {
     const matchesDate = !selectedDate || v.date === selectedDate;
     const term = searchTerm.toLowerCase().trim();
     const matchesSearch = !term || (
@@ -515,93 +427,13 @@ ${v.id_card_no ? `🎫 *পাস নং:* ${v.id_card_no}\n` : ''}━━━━�
       (v.phone_number || '').includes(term) ||
       String(v.sl).includes(term)
     );
-    const matchesStatus = statusFilter === 'All' || v.status === statusFilter;
-    return matchesDate && matchesSearch && matchesStatus;
+    return matchesDate && matchesSearch;
   });
-
-  // Calculate Metrics for Selected Date
-  const dateVisitors = visitors.filter(v => v.date === selectedDate);
-  const totalCountToday = dateVisitors.length;
-  const insideCountToday = dateVisitors.filter(v => !v.out_time || v.status === 'Inside').length;
-  const checkedOutCountToday = totalCountToday - insideCountToday;
-
-  // EOD Daily Report text for Mail & WhatsApp
-  const getDailyReportText = () => {
-    const targetDate = selectedDate || getTodayString();
-    const targetVisitors = visitors.filter(v => v.date === targetDate);
-    const targetInside = targetVisitors.filter(v => !v.out_time || v.status === 'Inside').length;
-    const targetOut = targetVisitors.length - targetInside;
-
-    const lines = targetVisitors.map(v => 
-      `${v.sl}. ${v.company_name} | সাক্ষাৎ: ${v.who_meet} | ইন: ${v.in_time} | আউট: ${v.out_time || 'ভিতরে'} | উদ্দেশ্য: ${v.purpose}`
-    );
-
-    const emailSubject = `[Windy Group] দিন শেষের সম্পূর্ণ ভিজিটর রিপোর্ট - ${targetDate} (মোট: ${targetVisitors.length} জন)`;
-    const emailBody = 
-`WINDY GROUP - দিন শেষের সম্পূর্ণ ভিজিটর রিপোর্ট
-তারিখ (Date): ${targetDate}
-মোট ভিজিটর : ${targetVisitors.length} জন | ভিতরে অবস্থান: ${targetInside} জন | প্রস্থান: ${targetOut} জন
---------------------------------------------------------------------------------
-${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন্ট্রি নেই।'}
---------------------------------------------------------------------------------
-প্রেরক (Operator): ${currentUserEmail}
-এডমিন প্রাপক     : ${adminRecipientEmails}`;
-
-    const waText = 
-`*📋 WINDY GROUP - দিন শেষের সম্পূর্ণ ভিজিটর রিপোর্ট*
-📅 *তারিখ:* ${targetDate}
-📊 *মোট ভিজিটর:* ${targetVisitors.length} জন | ভিতরে: ${targetInside} | প্রস্থান: ${targetOut}
-━━━━━━━━━━━━━━━━━━
-${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন্ট্রি নেই।'}
-━━━━━━━━━━━━━━━━━━
-👤 *প্রেরক:* ${currentUserEmail}`;
-
-    return { emailSubject, emailBody, waText, targetVisitors };
-  };
-
-  // 1-CLICK INSTANT WHATSAPP SEND (এক ক্লিকেই সারাদিনের রিপোর্ট WhatsApp এ পাঠানো)
-  const handleInstant1ClickWhatsAppReport = () => {
-    const { waText, targetVisitors } = getDailyReportText();
-    if (targetVisitors.length === 0) {
-      alert(`আজকের (${selectedDate || getTodayString()}) তারিখে কোনো ভিজিটর এন্ট্রি পাওয়া যায়নি।`);
-      return;
-    }
-    const cleanPhone = formatWhatsAppPhone(adminWhatsAppNumber);
-    const waUrl = cleanPhone 
-      ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(waText)}`
-      : `https://api.whatsapp.com/send?text=${encodeURIComponent(waText)}`;
-    window.open(waUrl, '_blank');
-  };
-
-  // 1-CLICK INSTANT GMAIL/MAIL SEND (এক ক্লিকেই সারাদিনের রিপোর্ট মেইলে পাঠানো)
-  const handleInstant1ClickEmailReport = () => {
-    const { emailSubject, emailBody, targetVisitors } = getDailyReportText();
-    if (targetVisitors.length === 0) {
-      alert(`আজকের (${selectedDate || getTodayString()}) তারিখে কোনো ভিজিটর এন্ট্রি পাওয়া যায়নি।`);
-      return;
-    }
-    const recipients = adminRecipientEmails.trim();
-    // Use Gmail web if available, otherwise mailto
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(recipients)}&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
-    window.open(gmailUrl, '_blank');
-  };
-
-  // Copy Full Daily Report Text to Clipboard
-  const handleCopyDailyReport = () => {
-    const { waText } = getDailyReportText();
-    navigator.clipboard.writeText(waText);
-    setCopiedReport(true);
-    setTimeout(() => setCopiedReport(false), 3000);
-  };
 
   // Export to Excel
   const exportToExcel = () => {
-    const headers = [
-      'SL', 'Date', 'Company Name', 'Visitor Name', 'Phone Number', 
-      'Who Meet', 'Purpose', 'In Time', 'Out Time', 'Status', 'Pass/Card No', 'Remarks'
-    ];
-
-    const rows = filteredVisitors.map((v, i) => [
+    const headers = ['SL', 'Date', 'Company Name', 'Visitor Name', 'Phone', 'Who Meet', 'Purpose', 'In Time', 'Out Time', 'Status', 'Pass No'];
+    const rows = historyVisitors.map((v, i) => [
       v.sl || i + 1,
       v.date,
       v.company_name,
@@ -612,293 +444,170 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
       v.in_time,
       v.out_time || '',
       v.status,
-      v.id_card_no || '',
-      v.remarks || ''
+      v.id_card_no || ''
     ]);
-
     const sheetData = [headers, ...rows];
     const ws = XLSX.utils.aoa_to_sheet(sheetData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Visitor Log');
-    XLSX.writeFile(wb, `Windy_Group_Visitors_${selectedDate || 'All'}.xlsx`);
-  };
-
-  // Export to PDF
-  const exportToPDF = () => {
-    const doc = new jsPDF({
-      orientation: 'landscape',
-      unit: 'mm',
-      format: 'a4'
-    });
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(15, 23, 42);
-    doc.text("WINDY GROUP - VISITOR IN-OUT REGISTER", 10, 10);
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`DATE: ${selectedDate || 'ALL DATES'}  |  OPERATOR: ${currentUserEmail}  |  TOTAL: ${filteredVisitors.length}`, 10, 15);
-
-    doc.setDrawColor(30, 41, 59);
-    doc.setLineWidth(0.4);
-    doc.line(10, 17.5, 287, 17.5);
-
-    const headers = [['SL', 'Date', 'Company Name', 'Visitor Name', 'Phone No', 'Who Meet', 'Purpose', 'In Time', 'Out Time', 'Status']];
-    const body = filteredVisitors.map((v, i) => [
-      v.sl || i + 1,
-      v.date,
-      v.company_name,
-      v.visitor_name || '-',
-      v.phone_number || '-',
-      v.who_meet,
-      v.purpose,
-      v.in_time,
-      v.out_time || '-',
-      v.status
-    ]);
-
-    autoTable(doc, {
-      head: headers,
-      body: body,
-      startY: 20,
-      theme: 'grid',
-      styles: {
-        fontSize: 7.5,
-        cellPadding: 1.8,
-        valign: 'middle'
-      },
-      headStyles: {
-        fillColor: [15, 23, 42],
-        textColor: [255, 255, 255],
-        fontStyle: 'bold',
-        halign: 'center'
-      },
-      columnStyles: {
-        0: { halign: 'center', cellWidth: 10 },
-        1: { halign: 'center', cellWidth: 20 },
-        2: { cellWidth: 42, fontStyle: 'bold' },
-        3: { cellWidth: 32 },
-        4: { halign: 'center', cellWidth: 24 },
-        5: { cellWidth: 38, fontStyle: 'bold' },
-        6: { cellWidth: 46 },
-        7: { halign: 'center', cellWidth: 20, fontStyle: 'bold' },
-        8: { halign: 'center', cellWidth: 20, fontStyle: 'bold' },
-        9: { halign: 'center', cellWidth: 25 }
-      }
-    });
-
-    doc.save(`Windy_Group_Visitors_${selectedDate || 'Report'}.pdf`);
-  };
-
-  const copySqlCode = () => {
-    const sql = `create table if not exists public.visitors (
-  id serial primary key,
-  sl int null,
-  date date not null default current_date,
-  visitor_name text null,
-  company_name text not null,
-  who_meet text not null,
-  purpose text not null,
-  in_time text not null,
-  out_time text null,
-  phone_number text null,
-  id_card_no text null,
-  status text null default 'Inside',
-  remarks text null,
-  created_at timestamp with time zone default timezone('utc'::text, now())
-);`;
-    navigator.clipboard.writeText(sql);
-    setCopiedSql(true);
-    setTimeout(() => setCopiedSql(false), 3000);
+    XLSX.utils.book_append_sheet(wb, ws, 'Visitors');
+    XLSX.writeFile(wb, `Visitors_${selectedDate || 'All'}.xlsx`);
   };
 
   return (
-    <section className="bg-stone-50 md:bg-white p-2.5 sm:p-4 md:p-8 rounded-sm shadow-xs border border-stone-200 pb-24 md:pb-8">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4 pb-3 border-b border-stone-200">
+    <section className="bg-stone-50 md:bg-white p-2.5 sm:p-5 md:p-8 rounded-sm border border-stone-200 pb-28 md:pb-32">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-4 pb-3 border-b border-stone-200">
         <div>
-          <h2 className="text-base sm:text-lg md:text-xl font-black tracking-wide text-stone-900 flex items-center gap-2">
-            <UserCheck className="text-amber-600 shrink-0" size={24} />
-            VISITOR IN - OUT / ভিজিটর ইন-আউট
+          <h2 className="text-base sm:text-xl font-black text-stone-900 flex items-center gap-2">
+            <UserCheck className="text-amber-600" size={24} />
+            VISITOR IN - OUT REGISTER
           </h2>
-          <p className="text-[11px] sm:text-xs text-stone-600 font-medium mt-0.5">
-            মোবাইলে দ্রুত এন্ট্রি দিন এবং <strong>১-ক্লিকেই সারা দিনের রিপোর্ট</strong> WhatsApp বা মেইলে পাঠান।
+          <p className="text-[11px] sm:text-xs text-stone-500 font-medium">
+            ভিতরে থাকা ভিজিটর উপরে থাকবে &bull; ১-ক্লিকেই আউট দিন &bull; নিচে শুধু ১টি WhatsApp বাটন
           </p>
         </div>
 
-        {/* View Switcher & Settings */}
-        <div className="flex items-center gap-2 w-full md:w-auto justify-between md:justify-end">
-          {/* Card View / Table View Toggle */}
-          <div className="bg-stone-200 p-1 rounded-sm flex items-center gap-1 text-xs font-bold">
-            <button
-              onClick={() => setViewLayout('cards')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] cursor-pointer transition-colors ${
-                viewLayout === 'cards' ? 'bg-amber-500 text-stone-950 shadow-xs' : 'text-stone-700 hover:text-stone-900'
-              }`}
-            >
-              <LayoutGrid size={13} />
-              <span>কার্ড ভিউ</span>
-            </button>
-            <button
-              onClick={() => setViewLayout('table')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-[11px] cursor-pointer transition-colors ${
-                viewLayout === 'table' ? 'bg-amber-500 text-stone-950 shadow-xs' : 'text-stone-700 hover:text-stone-900'
-              }`}
-            >
-              <TableIcon size={13} />
-              <span>টেবিল ভিউ</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={exportToExcel}
-              className="hidden sm:flex items-center gap-1 bg-[#107c41] hover:bg-[#0a522a] text-white px-2.5 py-1.5 text-xs font-bold uppercase rounded cursor-pointer"
-              title="Excel Export"
-            >
-              <FileSpreadsheet size={13} /> Excel
-            </button>
-            <button
-              onClick={() => setShowSettingsModal(true)}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded border border-stone-300 text-xs font-bold cursor-pointer"
-              title="ইমেইল ও WhatsApp নম্বর সেটিংস"
-            >
-              <Settings size={14} />
-              <span className="hidden sm:inline">সেটিংস</span>
-            </button>
-          </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setShowSettingsModal(true)}
+            className="flex items-center gap-1 px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded border border-stone-300 text-xs font-bold cursor-pointer"
+            title="WhatsApp নম্বর সেট করুন"
+          >
+            <Settings size={14} />
+            <span>নম্বর সেটিংস</span>
+          </button>
         </div>
-      </div>
-
-      {/* =========================================================================
-          🔥 SUPER HIGHLIGHT: 1-CLICK END-OF-DAY REPORT BAR (১-ক্লিকেই সারাদিনের রিপোর্ট)
-          ========================================================================= */}
-      <div className="bg-gradient-to-r from-stone-900 via-stone-850 to-stone-900 text-white p-3.5 sm:p-4 rounded-md shadow-md mb-4 border border-stone-800">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="bg-amber-400 text-stone-950 text-[10px] font-black uppercase px-2 py-0.5 rounded flex items-center gap-1">
-                <Zap size={11} className="fill-stone-950" /> ১-ক্লিক রিপোর্ট
-              </span>
-              <span className="text-xs sm:text-sm font-bold text-stone-200">
-                তারিখ: <strong className="text-white font-mono">{selectedDate}</strong> (আজকের মোট: {totalCountToday} জন)
-              </span>
-            </div>
-            <p className="text-[11px] text-stone-300 mt-1">
-              এক ক্লিকেই আজকের সমস্ত ভিজিটরের বিস্তারিত তালিকা এডমিনের কাছে পাঠানো হবে।
-            </p>
-          </div>
-
-          {/* The 2 Direct 1-Click Buttons */}
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            {/* 1. Direct WhatsApp Button */}
-            <button
-              onClick={handleInstant1ClickWhatsAppReport}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2.5 text-xs font-black rounded shadow-md transition-transform active:scale-95 cursor-pointer"
-              title="১-ক্লিকেই WhatsApp এ আজকের সম্পূর্ণ রিপোর্ট পাঠান"
-            >
-              <MessageCircle size={16} className="shrink-0" />
-              <span>WhatsApp এ পাঠান</span>
-            </button>
-
-            {/* 2. Direct Gmail Button */}
-            <button
-              onClick={handleInstant1ClickEmailReport}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 bg-sky-600 hover:bg-sky-500 text-white px-3.5 py-2.5 text-xs font-black rounded shadow-md transition-transform active:scale-95 cursor-pointer"
-              title="১-ক্লিকেই Gmail এ আজকের রিপোর্ট পাঠান"
-            >
-              <Mail size={16} className="shrink-0" />
-              <span>মেইলে পাঠান</span>
-            </button>
-
-            {/* 3. Quick Copy text */}
-            <button
-              onClick={handleCopyDailyReport}
-              className="p-2.5 bg-stone-800 hover:bg-stone-700 text-stone-200 rounded border border-stone-700 cursor-pointer"
-              title="রিপোর্ট টেক্সট কপি করুন"
-            >
-              <Copy size={15} />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Operator & Admin Settings Summary Banner */}
-      <div className="bg-amber-50/70 border border-amber-300/80 p-2.5 sm:p-3 rounded-md mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs">
-        <div className="flex items-center gap-2 flex-wrap text-[11px]">
-          <span className="font-bold text-amber-950 flex items-center gap-1">
-            <Smartphone size={13} className="text-amber-700" /> প্রেরক:
-          </span>
-          <span className="font-mono font-bold text-stone-800">{currentUserEmail}</span>
-          <span className="text-stone-300">&bull;</span>
-          <span className="text-stone-600">
-            এডমিন WA: <strong className="text-emerald-700 font-mono font-bold">{adminWhatsAppNumber}</strong>
-          </span>
-        </div>
-        <button
-          onClick={() => setShowSettingsModal(true)}
-          className="text-amber-800 underline font-bold hover:text-amber-950 text-[11px] cursor-pointer"
-        >
-          নম্বর বা মেইল এডিট
-        </button>
       </div>
 
       {/* Alert Banner */}
       {actionMessage && (
-        <div className={`p-3 rounded mb-4 text-xs font-semibold flex items-center justify-between transition-all ${
-          actionMessage.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' :
-          actionMessage.type === 'error' ? 'bg-red-50 text-red-800 border border-red-200' :
-          'bg-blue-50 text-blue-800 border border-blue-200'
+        <div className={`p-3 rounded mb-4 text-xs font-bold flex items-center justify-between ${
+          actionMessage.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-300' :
+          actionMessage.type === 'error' ? 'bg-red-50 text-red-800 border border-red-300' :
+          'bg-blue-50 text-blue-800 border border-blue-300'
         }`}>
           <div className="flex items-center gap-2">
-            {actionMessage.type === 'success' ? <CheckCircle2 size={16} className="text-emerald-600" /> : <AlertCircle size={16} />}
+            <CheckCircle2 size={16} />
             <span>{actionMessage.text}</span>
           </div>
-          <button onClick={() => setActionMessage(null)} className="text-stone-400 hover:text-stone-600">
+          <button onClick={() => setActionMessage(null)}>
             <X size={15} />
           </button>
         </div>
       )}
 
       {/* =========================================================================
-          📱 MOBILE-FIRST QUICK ENTRY PANEL (মোবাইলে সহজে এন্ট্রি দেওয়ার বিশেষ কার্ড)
+          🔥 SECTION 1: বর্তমানে ভিতরে আছেন (CURRENTLY INSIDE - TOP OF DASHBOARD)
+          এখান থেকে "আউট দিন" বাটনে চাপ দিলে ড্যাশবোর্ড থেকে সাথে সাথে চলে যাবে!
           ========================================================================= */}
-      <div className="bg-white border-2 border-amber-400 rounded-md shadow-sm p-3 sm:p-5 mb-5">
-        <div className="flex justify-between items-center mb-3">
+      <div className="bg-white border-2 border-rose-400 rounded-md shadow-sm p-3 sm:p-4 mb-5">
+        <div className="flex items-center justify-between border-b border-rose-100 pb-2.5 mb-3">
           <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-amber-500 animate-pulse"></span>
+            <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping"></span>
+            <h3 className="text-sm font-black text-rose-950 uppercase tracking-wide">
+              বর্তমানে ভিতরে আছেন ({currentlyInsideVisitors.length} জন)
+            </h3>
+          </div>
+          <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-2 py-0.5 rounded">
+            প্রস্থান বাকি আছে
+          </span>
+        </div>
+
+        {currentlyInsideVisitors.length === 0 ? (
+          <div className="py-5 text-center text-emerald-700 font-bold text-xs flex items-center justify-center gap-2 bg-emerald-50/50 rounded border border-emerald-200">
+            <CheckCircle2 size={16} className="text-emerald-600" />
+            <span>বর্তমানে কোনো ভিজিটর ভিতরে অবস্থান করছেন না (সবাই প্রস্থান করেছেন)।</span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {currentlyInsideVisitors.map((v) => (
+              <div 
+                key={v.id} 
+                className="bg-rose-50/40 border border-rose-200 rounded p-3 flex flex-col justify-between shadow-xs hover:border-rose-300 transition-colors"
+              >
+                <div>
+                  <div className="flex justify-between items-start gap-1">
+                    <div className="font-black text-sky-950 text-sm flex items-center gap-1.5">
+                      <Building size={14} className="text-sky-700 shrink-0" />
+                      <span>{v.company_name}</span>
+                    </div>
+                    <span className="text-[10px] font-mono bg-white border border-rose-200 text-rose-700 font-bold px-1.5 py-0.5 rounded shrink-0">
+                      ইন: {v.in_time}
+                    </span>
+                  </div>
+
+                  {v.visitor_name && (
+                    <div className="text-xs text-stone-700 font-medium flex items-center gap-1 mt-1">
+                      <User size={12} className="text-stone-400" />
+                      <span>{v.visitor_name}</span>
+                      {v.phone_number && (
+                        <span className="text-[10px] text-stone-500 font-mono">({v.phone_number})</span>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="mt-2 text-[11px] bg-white/80 p-2 rounded border border-stone-200 space-y-0.5">
+                    <div>
+                      <span className="font-bold text-stone-500 text-[10px]">সাক্ষাৎ: </span>
+                      <strong className="text-amber-950">{v.who_meet}</strong>
+                    </div>
+                    <div>
+                      <span className="font-bold text-stone-500 text-[10px]">উদ্দেশ্য: </span>
+                      <span className="text-stone-700">{v.purpose}</span>
+                    </div>
+                    {v.id_card_no && (
+                      <div className="text-[10px] font-mono text-stone-500">
+                        পাস নং: {v.id_card_no}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 1-CLICK OUT BUTTON: Click and they vanish from this top section immediately */}
+                <div className="mt-3 pt-2 border-t border-rose-100 flex items-center justify-between gap-2">
+                  <span className="text-[10px] text-stone-500 font-mono">{v.date}</span>
+                  <button
+                    onClick={() => handleQuickCheckout(v)}
+                    className="flex-1 py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded shadow-xs flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer transition-transform"
+                    title="ক্লিক করলেই বর্তমান সময় বের হওয়ার সময় হিসেবে সেভ হবে এবং ড্যাশবোর্ড থেকে চলে যাবে"
+                  >
+                    <LogOut size={13} />
+                    <span>🚪 আউট দিন</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* =========================================================================
+          📱 SECTION 2: নতুন ভিজিটর এন্ট্রি ফরম (QUICK MOBILE ENTRY)
+          একদম সহজ ও পরিচ্ছন্ন - অতিরিক্ত কোনো বাটন নেই
+          ========================================================================= */}
+      <div className="bg-white border border-stone-300 rounded-md shadow-sm p-3.5 sm:p-5 mb-5">
+        <div className="flex justify-between items-center mb-3 pb-2 border-b border-stone-200">
+          <div className="flex items-center gap-2">
+            <Plus size={16} className="text-amber-600" />
             <h3 className="text-xs sm:text-sm font-black uppercase tracking-wide text-stone-900">
-              নতুন ভিজিটর এন্ট্রি ফরম (Quick Mobile Entry)
+              নতুন ভিজিটর এন্ট্রি করুন (New Entry)
             </h3>
           </div>
           <button
             type="button"
             onClick={() => setFormData({ ...formData, in_time: formatCurrentTime() })}
-            className="text-[11px] bg-stone-100 hover:bg-stone-200 border border-stone-300 text-stone-800 px-2.5 py-1 rounded font-bold flex items-center gap-1 cursor-pointer"
+            className="text-[11px] bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-300 px-2 py-0.5 rounded font-bold cursor-pointer"
           >
-            <Clock size={12} className="text-amber-600" />
-            এখন সময় দিন
+            ⏰ এখন সময় দিন
           </button>
         </div>
 
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!formData.company_name || !formData.who_meet || !formData.purpose) {
-              alert('অনুগ্রহ করে কোম্পানির নাম, কার সাথে দেখা করবেন ও উদ্দেশ্য পূরণ করুন।');
-              return;
-            }
-            saveVisitorRecord(formData, true);
-          }}
-          className="space-y-3"
-        >
-          {/* Row 1: Company Name & Visitor Name */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        <form onSubmit={handleSaveNewVisitor} className="space-y-3">
+          {/* Company & Visitor */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] font-black text-stone-800 uppercase mb-1">
-                ১. কোম্পানির নাম (Company Name) *
+              <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
+                কোম্পানির নাম (Company Name) *
               </label>
               <input
                 type="text"
@@ -911,44 +620,44 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
             </div>
 
             <div>
-              <label className="block text-[11px] font-black text-stone-800 uppercase mb-1">
-                ২. ভিজিটরের নাম ও মোবাইল নম্বর
+              <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
+                ভিজিটরের নাম ও মোবাইল
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="text"
                   value={formData.visitor_name}
                   onChange={e => setFormData({ ...formData, visitor_name: e.target.value })}
-                  placeholder="নাম (Visitor Name)"
-                  className="w-full border border-stone-300 focus:border-amber-500 p-2.5 rounded text-sm font-medium outline-none"
+                  placeholder="নাম (ঐচ্ছিক)"
+                  className="w-full border border-stone-300 p-2.5 rounded text-sm outline-none"
                 />
                 <input
                   type="text"
                   value={formData.phone_number || ''}
                   onChange={e => setFormData({ ...formData, phone_number: e.target.value })}
-                  placeholder="ফোন (017...)"
-                  className="w-full border border-stone-300 focus:border-amber-500 p-2.5 rounded text-sm font-mono outline-none"
+                  placeholder="মোবাইল (ঐচ্ছিক)"
+                  className="w-full border border-stone-300 p-2.5 rounded text-sm font-mono outline-none"
                 />
               </div>
             </div>
           </div>
 
-          {/* Row 2: Who Meet & Purpose */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {/* Who Meet & Purpose */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-[11px] font-black text-stone-800 uppercase mb-1">
-                ৩. কার সাথে সাক্ষাৎ করবেন (Who Meet) *
+              <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
+                কার সাথে সাক্ষাৎ (Who Meet) *
               </label>
               <input
                 type="text"
-                list="mobile-staff-list"
+                list="staff-list"
                 value={formData.who_meet}
                 onChange={e => setFormData({ ...formData, who_meet: e.target.value })}
-                placeholder="নাম লিখুন বা সিলেক্ট করুন..."
+                placeholder="কর্মকর্তার নাম লিখুন বা সিলেক্ট করুন..."
                 required
                 className="w-full border-2 border-stone-300 focus:border-amber-500 p-2.5 rounded text-sm font-bold text-amber-950 outline-none"
               />
-              <datalist id="mobile-staff-list">
+              <datalist id="staff-list">
                 {employees.map(emp => (
                   <option key={emp.id} value={`${emp.name} (${emp.designation || emp.id})`} />
                 ))}
@@ -956,45 +665,45 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
             </div>
 
             <div>
-              <label className="block text-[11px] font-black text-stone-800 uppercase mb-1">
-                ৪. উদ্দেশ্য (Purpose) *
+              <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
+                উদ্দেশ্য (Purpose) *
               </label>
               <input
                 type="text"
                 value={formData.purpose}
                 onChange={e => setFormData({ ...formData, purpose: e.target.value })}
-                placeholder="ভিজিটের উদ্দেশ্য লিখুন..."
+                placeholder="ভিজিটের উদ্দেশ্য..."
                 required
-                className="w-full border-2 border-stone-300 focus:border-amber-500 p-2.5 rounded text-sm font-medium outline-none"
+                className="w-full border-2 border-stone-300 focus:border-amber-500 p-2.5 rounded text-sm outline-none"
               />
             </div>
           </div>
 
-          {/* Quick Purpose Chips (1-tap selection on mobile) */}
-          <div className="pt-0.5">
-            <span className="text-[10px] font-bold text-stone-500 uppercase block mb-1">
-              দ্রুত উদ্দেশ্য নির্বাচন (ট্যাপ করলেই বসে যাবে):
+          {/* 1-Tap Purpose Chips */}
+          <div>
+            <span className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
+              দ্রুত সিলেক্ট:
             </span>
-            <div className="flex flex-wrap gap-1.5">
-              {QUICK_PURPOSE_OPTIONS.map((item) => (
+            <div className="flex flex-wrap gap-1">
+              {QUICK_PURPOSES.map(p => (
                 <button
-                  key={item}
+                  key={p}
                   type="button"
-                  onClick={() => setFormData({ ...formData, purpose: item })}
-                  className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors cursor-pointer ${
-                    formData.purpose === item 
-                      ? 'bg-amber-500 text-stone-950 font-black border-amber-600' 
-                      : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300 font-medium'
+                  onClick={() => setFormData({ ...formData, purpose: p })}
+                  className={`text-[11px] px-2 py-0.5 rounded border cursor-pointer ${
+                    formData.purpose === p 
+                      ? 'bg-amber-500 text-stone-950 font-bold border-amber-600' 
+                      : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300'
                   }`}
                 >
-                  + {item}
+                  + {p}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Row 3: In Time, Out Time & Pass No */}
-          <div className="grid grid-cols-3 gap-2 pt-1">
+          {/* In Time & Pass No */}
+          <div className="grid grid-cols-2 gap-3 pt-1">
             <div>
               <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">
                 In Time *
@@ -1004,547 +713,193 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
                 value={formData.in_time}
                 onChange={e => setFormData({ ...formData, in_time: e.target.value })}
                 required
-                className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-emerald-800 outline-none"
+                className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-emerald-800"
               />
             </div>
 
             <div>
               <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">
-                Out Time
-              </label>
-              <input
-                type="text"
-                value={formData.out_time || ''}
-                onChange={e => setFormData({ ...formData, out_time: e.target.value })}
-                placeholder="বের হলে..."
-                className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-rose-800 outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">
-                পাস নং (Pass/Card)
+                পাস নং / কার্ড নং
               </label>
               <input
                 type="text"
                 value={formData.id_card_no || ''}
                 onChange={e => setFormData({ ...formData, id_card_no: e.target.value })}
                 placeholder="V-01"
-                className="w-full border border-stone-300 p-2 rounded text-xs font-mono outline-none"
+                className="w-full border border-stone-300 p-2 rounded text-xs font-mono"
               />
             </div>
           </div>
 
-          {/* Large Touch-Friendly Submit Buttons (Perfect for Phone Thumbs) */}
-          <div className="pt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
-            {/* 1. Save & Send via WhatsApp */}
-            <button
-              type="button"
-              onClick={() => {
-                if (!formData.company_name || !formData.who_meet || !formData.purpose) {
-                  alert('অনুগ্রহ করে কোম্পানির নাম, কার সাথে দেখা করবেন ও উদ্দেশ্য পূরণ করুন।');
-                  return;
-                }
-                saveVisitorRecord(formData, true, 'whatsapp');
-              }}
-              className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-black text-xs sm:text-sm rounded-md shadow-sm flex items-center justify-center gap-2 cursor-pointer transition-transform"
-            >
-              <MessageCircle size={18} />
-              <span>সেভ ও WhatsApp এ পাঠান</span>
-            </button>
-
-            {/* 2. Save & Send via Email */}
-            <button
-              type="button"
-              onClick={() => {
-                if (!formData.company_name || !formData.who_meet || !formData.purpose) {
-                  alert('অনুগ্রহ করে কোম্পানির নাম, কার সাথে দেখা করবেন ও উদ্দেশ্য পূরণ করুন।');
-                  return;
-                }
-                saveVisitorRecord(formData, true, 'email');
-              }}
-              className="w-full py-3 px-4 bg-sky-600 hover:bg-sky-500 active:scale-98 text-white font-black text-xs sm:text-sm rounded-md shadow-sm flex items-center justify-center gap-2 cursor-pointer transition-transform"
-            >
-              <Mail size={18} />
-              <span>সেভ ও মেইলে পাঠান</span>
-            </button>
-
-            {/* 3. Normal Save */}
+          {/* JUST ONE CLEAN SUBMIT BUTTON */}
+          <div className="pt-2">
             <button
               type="submit"
-              className="w-full py-3 px-4 bg-stone-900 hover:bg-black active:scale-98 text-white font-black text-xs sm:text-sm rounded-md shadow-sm flex items-center justify-center gap-1.5 cursor-pointer transition-transform"
+              className="w-full py-3 bg-stone-900 hover:bg-black active:scale-98 text-white font-black text-sm rounded shadow-sm flex items-center justify-center gap-2 cursor-pointer transition-transform"
             >
-              <CheckCircle2 size={18} />
-              <span>শুধু সেভ করুন</span>
+              <CheckCircle2 size={18} className="text-amber-400" />
+              <span>ভিজিটর এন্ট্রি সেভ করুন</span>
             </button>
           </div>
         </form>
       </div>
 
-      {/* Metrics Row */}
-      <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-4">
-        <div className="bg-white border border-stone-200 p-3 rounded text-center sm:text-left">
-          <div className="text-[10px] font-bold text-stone-500 uppercase">মোট ভিজিটর</div>
-          <div className="text-xl sm:text-2xl font-black text-stone-900 font-mono mt-0.5">{totalCountToday}</div>
-        </div>
-
-        <div className="bg-amber-50/80 border border-amber-300 p-3 rounded text-center sm:text-left">
-          <div className="text-[10px] font-bold text-amber-800 uppercase flex items-center justify-center sm:justify-start gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-            ভিতরে আছেন
+      {/* =========================================================================
+          📋 SECTION 3: সমস্ত ভিজিটর লগ ও ইতিহাস (ALL VISITORS LOG)
+          ========================================================================= */}
+      <div className="bg-white border border-stone-300 rounded-md shadow-xs p-3.5 mb-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3 pb-2 border-b border-stone-200">
+          <div className="flex items-center gap-2">
+            <h4 className="text-xs font-black uppercase text-stone-900">
+              ভিজিটর তালিকা ({historyVisitors.length} টি রেকর্ড)
+            </h4>
           </div>
-          <div className="text-xl sm:text-2xl font-black text-amber-900 font-mono mt-0.5">{insideCountToday}</div>
+
+          {/* Date & Search */}
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value)}
+              className="bg-stone-50 border border-stone-300 rounded p-1 text-xs font-semibold"
+            />
+            <button
+              onClick={() => setSelectedDate(getTodayString())}
+              className={`px-2 py-1 rounded text-xs font-bold cursor-pointer ${selectedDate === getTodayString() ? 'bg-amber-500 text-stone-900' : 'bg-stone-200 text-stone-700'}`}
+            >
+              আজ
+            </button>
+            <button
+              onClick={() => setSelectedDate('')}
+              className={`px-2 py-1 rounded text-xs font-bold cursor-pointer ${selectedDate === '' ? 'bg-amber-500 text-stone-900' : 'bg-stone-200 text-stone-700'}`}
+            >
+              সব তারিখ
+            </button>
+            <button
+              onClick={exportToExcel}
+              className="px-2 py-1 bg-[#107c41] text-white rounded text-xs font-bold flex items-center gap-1 cursor-pointer"
+            >
+              <FileSpreadsheet size={12} /> Excel
+            </button>
+          </div>
         </div>
 
-        <div className="bg-white border border-stone-200 p-3 rounded text-center sm:text-left">
-          <div className="text-[10px] font-bold text-stone-600 uppercase">প্রস্থান সম্পন্ন</div>
-          <div className="text-xl sm:text-2xl font-black text-stone-700 font-mono mt-0.5">{checkedOutCountToday}</div>
-        </div>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className="bg-white p-3 border border-stone-200 rounded mb-4 flex flex-col md:flex-row flex-wrap items-center justify-between gap-2.5">
-        <div className="relative flex-1 min-w-[200px] w-full">
-          <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-stone-400">
-            <Search size={14} />
-          </span>
+        {/* Search */}
+        <div className="mb-3">
           <input
             type="text"
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            placeholder="কোম্পানি, ভিজিটর বা উদ্দেশ্য দিয়ে খুঁজুন..."
-            className="w-full bg-stone-50 border border-stone-300 rounded py-2 pl-9 pr-3 text-xs focus:ring-1 focus:ring-amber-500 outline-none"
+            placeholder="নাম, কোম্পানি বা উদ্দেশ্য দিয়ে খুঁজুন..."
+            className="w-full bg-stone-50 border border-stone-300 rounded p-2 text-xs outline-none"
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={e => setSelectedDate(e.target.value)}
-            className="bg-stone-50 border border-stone-300 rounded p-1.5 text-xs font-semibold focus:outline-none"
-          />
-          <button
-            onClick={() => setSelectedDate(getTodayString())}
-            className={`px-2 py-1.5 rounded text-[11px] font-bold cursor-pointer ${selectedDate === getTodayString() ? 'bg-amber-500 text-stone-900' : 'bg-stone-200 text-stone-700'}`}
-          >
-            আজ
-          </button>
-          <button
-            onClick={() => setSelectedDate('')}
-            className={`px-2 py-1.5 rounded text-[11px] font-bold cursor-pointer ${selectedDate === '' ? 'bg-amber-500 text-stone-900' : 'bg-stone-200 text-stone-700'}`}
-          >
-            সব
-          </button>
-          <select
-            value={statusFilter}
-            onChange={(e: any) => setStatusFilter(e.target.value)}
-            className="bg-stone-50 border border-stone-300 rounded py-1 px-2 text-xs font-medium focus:outline-none"
-          >
-            <option value="All">সব ({visitors.length})</option>
-            <option value="Inside">ভিতরে আছেন</option>
-            <option value="Checked Out">প্রস্থান</option>
-          </select>
-        </div>
-      </div>
-
-      {/* =========================================================================
-          VIEW A: MOBILE CARD VIEW (মোবাইল ফোনের জন্য টাচ-ফ্রেন্ডলি কার্ড লিস্ট)
-          ========================================================================= */}
-      {viewLayout === 'cards' && (
-        <div className="space-y-3">
-          {filteredVisitors.map((v, idx) => {
+        {/* Clean, Scannable Visitor Cards */}
+        <div className="space-y-2.5">
+          {historyVisitors.map((v, idx) => {
             const isInside = !v.out_time || v.status === 'Inside';
             return (
-              <div
+              <div 
                 key={v.id || idx}
-                className={`p-3.5 sm:p-4 rounded-md border transition-all ${
-                  isInside 
-                    ? 'bg-amber-50/40 border-amber-300 shadow-xs' 
-                    : 'bg-white border-stone-200 shadow-xs'
+                className={`p-3 rounded border flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+                  isInside ? 'bg-amber-50/40 border-amber-300' : 'bg-white border-stone-200'
                 }`}
               >
-                {/* Header: SL, Company, Status */}
-                <div className="flex justify-between items-start gap-2 mb-2">
+                <div>
                   <div className="flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-stone-900 text-white font-mono font-bold text-xs flex items-center justify-center shrink-0">
-                      {v.sl || idx + 1}
+                    <span className="font-mono font-bold text-stone-500 text-xs">
+                      #{v.sl || idx + 1}
                     </span>
-                    <div>
-                      <h4 className="text-sm font-black text-sky-950 flex items-center gap-1.5">
-                        <Building size={14} className="text-sky-700 shrink-0" />
-                        {v.company_name}
-                      </h4>
-                      {v.visitor_name && (
-                        <div className="text-xs text-stone-700 font-semibold flex items-center gap-1 mt-0.5">
-                          <User size={12} className="text-stone-400" />
-                          <span>{v.visitor_name}</span>
-                          {v.phone_number && (
-                            <a 
-                              href={`tel:${v.phone_number}`} 
-                              className="text-stone-500 font-mono text-[11px] underline ml-1 hover:text-stone-800"
-                            >
-                              ({v.phone_number})
-                            </a>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-tight shrink-0 ${
-                    isInside ? 'bg-amber-200 text-amber-950 border border-amber-400' : 'bg-stone-200 text-stone-700'
-                  }`}>
-                    {isInside ? 'ভিতরে আছেন' : 'প্রস্থান'}
-                  </span>
-                </div>
-
-                {/* Body: Who Meet & Purpose */}
-                <div className="bg-stone-100/70 p-2.5 rounded text-xs space-y-1 mb-3">
-                  <div className="flex items-baseline gap-1 text-stone-900">
-                    <span className="font-bold text-stone-500 text-[10px] uppercase">কার সাথে দেখা:</span>
-                    <span className="font-black text-amber-950 bg-amber-100/70 px-1.5 py-0.5 rounded">
-                      {v.who_meet}
+                    <strong className="text-sky-950 text-sm">{v.company_name}</strong>
+                    {v.visitor_name && (
+                      <span className="text-xs text-stone-600 font-medium">({v.visitor_name})</span>
+                    )}
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      isInside ? 'bg-rose-100 text-rose-800' : 'bg-stone-100 text-stone-600'
+                    }`}>
+                      {isInside ? 'ভিতরে আছেন' : 'প্রস্থান'}
                     </span>
                   </div>
-                  <div className="flex items-baseline gap-1 text-stone-700 text-[11px]">
-                    <span className="font-bold text-stone-500 text-[10px] uppercase">উদ্দেশ্য:</span>
-                    <span>{v.purpose}</span>
-                  </div>
-                  {v.id_card_no && (
-                    <div className="text-[10px] text-stone-500 font-mono">
-                      পাস নং: {v.id_card_no}
-                    </div>
-                  )}
-                </div>
 
-                {/* Time & Action Row */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-stone-200">
-                  {/* In & Out Time */}
-                  <div className="flex items-center gap-2 text-xs font-mono font-bold">
-                    <span className="text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-200">
-                      ইন: {v.in_time}
-                    </span>
-                    {v.out_time ? (
-                      <span className="text-rose-700 bg-rose-50 px-2 py-1 rounded border border-rose-200">
-                        আউট: {v.out_time}
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => handleQuickCheckout(v)}
-                        className="bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 rounded text-xs font-black uppercase flex items-center gap-1 shadow-xs active:scale-95 cursor-pointer"
-                        title="এক ক্লিকে বের হওয়ার সময় রেকর্ড করুন"
-                      >
-                        <LogOut size={12} />
-                        আউট দিন
-                      </button>
+                  <div className="text-xs text-stone-600 mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    <span>সাক্ষাৎ: <strong className="text-amber-950">{v.who_meet}</strong></span>
+                    <span>উদ্দেশ্য: {v.purpose}</span>
+                    <span className="font-mono text-emerald-800 font-bold">ইন: {v.in_time}</span>
+                    {v.out_time && (
+                      <span className="font-mono text-rose-800 font-bold">আউট: {v.out_time}</span>
                     )}
                   </div>
+                </div>
 
-                  {/* Share & Edit Actions */}
-                  <div className="flex items-center gap-1.5">
-                    {/* Send WhatsApp */}
+                <div className="flex items-center gap-1.5 self-end sm:self-center">
+                  {isInside && (
                     <button
-                      onClick={() => handleOpenWhatsAppForVisitor(v)}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold active:scale-95 cursor-pointer"
-                      title="এডমিন WhatsApp এ এই ভিজিটরের তথ্য পাঠান"
+                      onClick={() => handleQuickCheckout(v)}
+                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black rounded cursor-pointer"
                     >
-                      <MessageCircle size={14} />
-                      <span>WA</span>
+                      আউট দিন
                     </button>
-
-                    {/* Send Mail */}
-                    <button
-                      onClick={() => handleOpenEmailForVisitor(v)}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded text-xs font-bold active:scale-95 cursor-pointer"
-                      title="এডমিন মেইলে পাঠান"
-                    >
-                      <Mail size={14} />
-                      <span>মেইল</span>
-                    </button>
-
-                    {/* Edit */}
-                    <button
-                      onClick={() => {
-                        setEditingId(v.id || null);
-                        setFormData({ ...v });
-                        setShowEditModal(true);
-                      }}
-                      className="p-1.5 text-stone-600 hover:bg-stone-200 rounded cursor-pointer"
-                      title="ইডিট"
-                    >
-                      <Edit2 size={14} />
-                    </button>
-
-                    {/* Delete */}
-                    <button
-                      onClick={() => v.id && handleDelete(v.id)}
-                      className="p-1.5 text-red-600 hover:bg-red-50 rounded cursor-pointer"
-                      title="ডিলিট"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+                  )}
+                  <button
+                    onClick={() => {
+                      setEditingRecord({ ...v });
+                      setShowEditModal(true);
+                    }}
+                    className="p-1.5 text-stone-500 hover:bg-stone-200 rounded cursor-pointer"
+                    title="ইডিট"
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                  <button
+                    onClick={() => v.id && handleDelete(v.id)}
+                    className="p-1.5 text-red-500 hover:bg-red-50 rounded cursor-pointer"
+                    title="ডিলিট"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               </div>
             );
           })}
 
-          {filteredVisitors.length === 0 && (
-            <div className="p-8 text-center text-stone-400 bg-white border border-stone-200 rounded italic text-xs">
-              কোনো ভিজিটর রেকর্ড নেই। উপরের ফরম ব্যবহার করে নতুন এন্ট্রি দিন।
+          {historyVisitors.length === 0 && (
+            <div className="text-center py-6 text-stone-400 italic text-xs">
+              কোনো রেকর্ড পাওয়া যায়নি।
             </div>
           )}
         </div>
-      )}
-
-      {/* =========================================================================
-          VIEW B: DESKTOP TABLE VIEW (কম্পিউটার বা এক্সেল স্টাইল টেবিল)
-          ========================================================================= */}
-      {viewLayout === 'table' && (
-        <div className="overflow-x-auto border border-stone-200 rounded shadow-xs bg-white">
-          <table className="text-[11px] text-stone-800 border-collapse table-auto w-full min-w-[980px]">
-            <thead>
-              <tr className="bg-[#1e293b] text-white border-b border-slate-700 select-none">
-                <th className="px-2 py-3 border border-slate-700 font-bold text-center w-12">SL</th>
-                <th className="px-2.5 py-3 border border-slate-700 font-bold text-center w-24">Date</th>
-                <th className="px-3 py-3 border border-slate-700 font-bold text-left">Company Name</th>
-                <th className="px-3 py-3 border border-slate-700 font-bold text-left">Visitor Name & Phone</th>
-                <th className="px-3 py-3 border border-slate-700 font-bold text-left">Who Meet</th>
-                <th className="px-3 py-3 border border-slate-700 font-bold text-left">Purpose</th>
-                <th className="px-2 py-3 border border-slate-700 font-bold text-center w-24 bg-[#0f172a] text-emerald-300">
-                  In Time
-                </th>
-                <th className="px-2 py-3 border border-slate-700 font-bold text-center w-28 bg-[#0f172a] text-rose-300">
-                  Out Time
-                </th>
-                <th className="px-2 py-3 border border-slate-700 font-bold text-center w-24">Status</th>
-                <th className="px-3 py-3 border border-slate-700 font-bold text-center w-52 bg-[#0f172a] text-amber-300">
-                  পাঠান ও অ্যাকশন
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredVisitors.map((v, idx) => {
-                const isInside = !v.out_time || v.status === 'Inside';
-                const rowBg = isInside ? 'bg-amber-50/20' : (idx % 2 === 0 ? 'bg-white' : 'bg-stone-50/50');
-
-                return (
-                  <tr key={v.id || idx} className={`${rowBg} hover:bg-amber-50/40 transition-colors border-b border-stone-200`}>
-                    <td className="px-2 py-2.5 border text-center font-bold text-stone-700">{v.sl || idx + 1}</td>
-                    <td className="px-2.5 py-2.5 border text-center font-mono text-stone-600">{v.date}</td>
-                    <td className="px-3 py-2.5 border text-left font-bold text-sky-950">
-                      <div className="flex items-center gap-1.5">
-                        <Building size={13} className="text-sky-700 shrink-0" />
-                        <span>{v.company_name}</span>
-                      </div>
-                      {v.id_card_no && (
-                        <span className="text-[9px] font-mono text-stone-500 block ml-4">
-                          পাস: {v.id_card_no}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 border text-left">
-                      <div className="font-semibold text-stone-900 flex items-center gap-1">
-                        <User size={12} className="text-stone-400 shrink-0" />
-                        <span>{v.visitor_name || 'Visitor'}</span>
-                      </div>
-                      {v.phone_number && (
-                        <div className="text-[10px] text-stone-500 font-mono flex items-center gap-1 mt-0.5">
-                          <Phone size={10} className="text-stone-400" />
-                          <span>{v.phone_number}</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5 border text-left font-bold text-amber-900">
-                      <span className="bg-amber-100/60 px-1.5 py-0.5 rounded text-amber-950">
-                        {v.who_meet}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2.5 border text-left text-stone-700 text-[10px]">
-                      {v.purpose}
-                    </td>
-                    <td className="px-2 py-2.5 border text-center font-mono font-bold text-emerald-700">
-                      {v.in_time}
-                    </td>
-                    <td className="px-2 py-2.5 border text-center font-mono font-bold text-rose-700">
-                      {v.out_time ? (
-                        v.out_time
-                      ) : (
-                        <button
-                          onClick={() => handleQuickCheckout(v)}
-                          className="bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 text-[10px] font-bold rounded shadow-xs uppercase cursor-pointer"
-                        >
-                          আউট দিন
-                        </button>
-                      )}
-                    </td>
-                    <td className="px-2 py-2.5 border text-center">
-                      <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tight ${
-                        isInside ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-stone-100 text-stone-600 border border-stone-200'
-                      }`}>
-                        {isInside ? 'ভিতরে আছেন' : 'প্রস্থান'}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2.5 border text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <button
-                          onClick={() => handleOpenWhatsAppForVisitor(v)}
-                          className="flex items-center gap-1 px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold cursor-pointer"
-                          title="WhatsApp এ পাঠান"
-                        >
-                          <MessageCircle size={12} />
-                          <span>WA</span>
-                        </button>
-                        <button
-                          onClick={() => handleOpenEmailForVisitor(v)}
-                          className="flex items-center gap-1 px-2 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded text-[10px] font-bold cursor-pointer"
-                          title="মেইলে পাঠান"
-                        >
-                          <Mail size={12} />
-                          <span>মেইল</span>
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingId(v.id || null);
-                            setFormData({ ...v });
-                            setShowEditModal(true);
-                          }}
-                          className="p-1 text-stone-600 hover:bg-stone-200 rounded cursor-pointer"
-                        >
-                          <Edit2 size={13} />
-                        </button>
-                        <button
-                          onClick={() => v.id && handleDelete(v.id)}
-                          className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {filteredVisitors.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="px-4 py-16 text-center text-stone-400 font-mono italic">
-                    কোনো ভিজিটর রেকর্ড নেই।
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* =========================================================================
-          📌 STICKY BOTTOM MOBILE ACTION BAR (মোবাইলে স্ক্রিনে ভেসে থাকবে)
-          ========================================================================= */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-stone-300 p-2 md:hidden shadow-lg flex items-center justify-between gap-2">
-        <button
-          onClick={handleInstant1ClickWhatsAppReport}
-          className="flex-1 py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-black rounded flex items-center justify-center gap-1 shadow-xs active:scale-95 cursor-pointer"
-        >
-          <MessageCircle size={15} />
-          <span>১-ক্লিকে WA রিপোর্ট</span>
-        </button>
-
-        <button
-          onClick={handleInstant1ClickEmailReport}
-          className="flex-1 py-2.5 px-2 bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-black rounded flex items-center justify-center gap-1 shadow-xs active:scale-95 cursor-pointer"
-        >
-          <Mail size={15} />
-          <span>মেইল রিপোর্ট</span>
-        </button>
-
-        <button
-          onClick={() => {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }}
-          className="p-2.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded shadow-xs cursor-pointer"
-          title="উপরে যান"
-        >
-          <Plus size={16} />
-        </button>
       </div>
 
-      {/* ================= MODAL: INSTANT SHARE OPTIONS (POPUP AFTER ENTRY OR CHECKOUT) ================= */}
-      {showSendSuccessModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded shadow-2xl border border-stone-300 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="bg-emerald-700 text-white px-4 py-3 flex justify-between items-center">
-              <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
-                <CheckCircle2 size={16} />
-                ভিজিটর তথ্য সেভ হয়েছে!
-              </h3>
-              <button onClick={() => setShowSendSuccessModal(null)} className="text-emerald-200 hover:text-white cursor-pointer">
-                <X size={18} />
-              </button>
+      {/* =========================================================================
+          🔥 SECTION 4: FOOTER A JUST EKTA BUTTON (ফুটার এ শুধু একটা বাটন)
+          চাপ দিলেই Today total visitor summary সবসময় আসবে এবং WhatsApp এ পাঠাবে!
+          ========================================================================= */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t-2 border-emerald-500 p-3 shadow-2xl">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
+          <div className="hidden sm:block text-xs">
+            <div className="font-black text-stone-900">
+              আজকের ভিজিটর সামারি ({todayDateStr}): মোট {todayAllVisitors.length} জন
             </div>
-
-            <div className="p-4 space-y-3.5 text-xs">
-              <div className="bg-stone-50 border border-stone-200 p-2.5 rounded text-[11px] space-y-1">
-                <div>🏢 <strong>কোম্পানি:</strong> {showSendSuccessModal.company_name}</div>
-                <div>👤 <strong>সাক্ষাৎকারী:</strong> {showSendSuccessModal.who_meet}</div>
-                <div>⏰ <strong>প্রবেশের সময়:</strong> {showSendSuccessModal.in_time}</div>
-                {showSendSuccessModal.out_time && (
-                  <div>🚪 <strong>বের হওয়ার সময়:</strong> {showSendSuccessModal.out_time}</div>
-                )}
-              </div>
-
-              <div className="text-center font-bold text-stone-800 text-xs sm:text-sm">
-                এডমিনকে কিভাবে আপডেট পাঠাবেন?
-              </div>
-
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleOpenWhatsAppForVisitor(showSendSuccessModal);
-                    setShowSendSuccessModal(null);
-                  }}
-                  className="w-full p-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-bold flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                >
-                  <MessageCircle size={18} />
-                  <div className="text-left">
-                    <div className="text-xs font-black">WhatsApp এ এডমিনকে পাঠান</div>
-                    <div className="text-[10px] text-emerald-100 font-normal">নম্বর: {adminWhatsAppNumber}</div>
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleOpenGmailWebForVisitor(showSendSuccessModal);
-                    setShowSendSuccessModal(null);
-                  }}
-                  className="w-full p-3 bg-red-600 hover:bg-red-700 text-white rounded font-bold flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                >
-                  <ExternalLink size={18} />
-                  <div className="text-left">
-                    <div className="text-xs font-black">Gmail এ সরাসরি পাঠান</div>
-                    <div className="text-[10px] text-red-100 font-normal">প্রাপক: {adminRecipientEmails}</div>
-                  </div>
-                </button>
-              </div>
-
-              <div className="flex justify-end pt-2 border-t border-stone-200">
-                <button
-                  type="button"
-                  onClick={() => setShowSendSuccessModal(null)}
-                  className="px-4 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-800 font-bold rounded cursor-pointer"
-                >
-                  বন্ধ করুন
-                </button>
-              </div>
+            <div className="text-[10px] text-stone-500">
+              এডমিন WhatsApp: <strong>{adminWhatsAppNumber}</strong>
             </div>
           </div>
+
+          {/* THE SINGLE BIG BUTTON REQUESTED BY USER */}
+          <button
+            onClick={handleSendTodayWhatsAppSummary}
+            className="w-full sm:w-auto flex-1 py-3.5 px-6 bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-black text-sm md:text-base rounded-md shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-transform"
+          >
+            <MessageCircle size={22} className="shrink-0" />
+            <span>আজকের সম্পূর্ণ ভিজিটর রিপোর্ট WhatsApp এ পাঠান</span>
+          </button>
         </div>
-      )}
+      </div>
 
       {/* ================= MODAL: EDIT VISITOR ================= */}
-      {showEditModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs">
+      {showEditModal && editingRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs">
           <div className="bg-white rounded shadow-2xl border border-stone-300 w-full max-w-lg overflow-hidden">
             <div className="bg-stone-900 text-white px-4 py-3 flex justify-between items-center">
               <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
@@ -1556,63 +911,35 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
               </button>
             </div>
 
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                saveVisitorRecord(formData, false);
-                setShowEditModal(false);
-              }}
-              className="p-4 space-y-3 max-h-[82vh] overflow-y-auto text-xs"
-            >
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">SL</label>
-                  <input
-                    type="number"
-                    value={formData.sl || 1}
-                    onChange={e => setFormData({ ...formData, sl: parseInt(e.target.value, 10) || 1 })}
-                    className="w-full bg-stone-50 border border-stone-300 p-2 rounded text-xs font-mono font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">Date</label>
-                  <input
-                    type="date"
-                    value={formData.date}
-                    onChange={e => setFormData({ ...formData, date: e.target.value })}
-                    className="w-full bg-stone-50 border border-stone-300 p-2 rounded text-xs font-semibold"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
+            <form onSubmit={handleUpdateRecord} className="p-4 space-y-3 text-xs max-h-[80vh] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">কোম্পানির নাম *</label>
                   <input
                     type="text"
-                    value={formData.company_name}
-                    onChange={e => setFormData({ ...formData, company_name: e.target.value })}
+                    value={editingRecord.company_name}
+                    onChange={e => setEditingRecord({ ...editingRecord, company_name: e.target.value })}
                     required
-                    className="w-full border border-stone-300 p-2 rounded text-xs font-bold text-sky-950"
+                    className="w-full border border-stone-300 p-2 rounded text-xs font-bold"
                   />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">ভিজিটরের নাম</label>
                   <input
                     type="text"
-                    value={formData.visitor_name}
-                    onChange={e => setFormData({ ...formData, visitor_name: e.target.value })}
-                    className="w-full border border-stone-300 p-2 rounded text-xs font-medium"
+                    value={editingRecord.visitor_name || ''}
+                    onChange={e => setEditingRecord({ ...editingRecord, visitor_name: e.target.value })}
+                    className="w-full border border-stone-300 p-2 rounded text-xs"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">কার সাথে দেখা করবেন *</label>
+                <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">কার সাথে দেখা *</label>
                 <input
                   type="text"
-                  value={formData.who_meet}
-                  onChange={e => setFormData({ ...formData, who_meet: e.target.value })}
+                  value={editingRecord.who_meet}
+                  onChange={e => setEditingRecord({ ...editingRecord, who_meet: e.target.value })}
                   required
                   className="w-full border border-stone-300 p-2 rounded text-xs font-bold text-amber-950"
                 />
@@ -1622,39 +949,30 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
                 <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">উদ্দেশ্য *</label>
                 <input
                   type="text"
-                  value={formData.purpose}
-                  onChange={e => setFormData({ ...formData, purpose: e.target.value })}
+                  value={editingRecord.purpose}
+                  onChange={e => setEditingRecord({ ...editingRecord, purpose: e.target.value })}
                   required
                   className="w-full border border-stone-300 p-2 rounded text-xs"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">In Time</label>
                   <input
                     type="text"
-                    value={formData.in_time}
-                    onChange={e => setFormData({ ...formData, in_time: e.target.value })}
+                    value={editingRecord.in_time}
+                    onChange={e => setEditingRecord({ ...editingRecord, in_time: e.target.value })}
                     required
                     className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-emerald-800"
                   />
                 </div>
                 <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="text-[10px] font-bold text-stone-700 uppercase">Out Time</label>
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, out_time: formatCurrentTime() })}
-                      className="text-[9px] text-amber-700 font-bold underline cursor-pointer"
-                    >
-                      এখন দিন
-                    </button>
-                  </div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">Out Time</label>
                   <input
                     type="text"
-                    value={formData.out_time || ''}
-                    onChange={e => setFormData({ ...formData, out_time: e.target.value })}
+                    value={editingRecord.out_time || ''}
+                    onChange={e => setEditingRecord({ ...editingRecord, out_time: e.target.value })}
                     placeholder="বের হওয়ার সময়"
                     className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-rose-800"
                   />
@@ -1671,9 +989,9 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-stone-900 hover:bg-stone-800 text-white font-bold uppercase rounded cursor-pointer"
+                  className="px-5 py-2 bg-stone-900 hover:bg-black text-white font-bold rounded cursor-pointer"
                 >
-                  আপডেট সেভ করুন
+                  সংরক্ষণ করুন
                 </button>
               </div>
             </form>
@@ -1681,14 +999,14 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
         </div>
       )}
 
-      {/* ================= MODAL: SETTINGS (EMAILS & WHATSAPP) ================= */}
+      {/* ================= MODAL: SETTINGS (ONLY WHATSAPP) ================= */}
       {showSettingsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded shadow-2xl border border-stone-300 w-full max-w-lg overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded shadow-2xl border border-stone-300 w-full max-w-md overflow-hidden">
             <div className="bg-stone-900 text-white px-4 py-3 flex justify-between items-center">
               <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
-                <Settings size={15} className="text-amber-400" />
-                ইমেইল ও WhatsApp সেটিংস
+                <MessageCircle size={15} className="text-emerald-400" />
+                WhatsApp সেটিংস
               </h3>
               <button onClick={() => setShowSettingsModal(false)} className="text-stone-400 hover:text-white cursor-pointer">
                 <X size={18} />
@@ -1698,73 +1016,38 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                handleSaveSettings(currentUserEmail, adminRecipientEmails, adminWhatsAppNumber);
+                handleSaveSettings(operatorIdentity, adminWhatsAppNumber);
               }}
-              className="p-4 space-y-3.5 text-xs max-h-[82vh] overflow-y-auto"
+              className="p-4 space-y-3.5 text-xs"
             >
-              <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded text-stone-700 text-[11px] leading-relaxed">
-                💡 <strong>জিরো API ঝামেলা:</strong> কোনো পাসওয়ার্ড বা API কি ছাড়াই সরাসরি ব্রাউজার থেকে WhatsApp ও মেইল কাজ করে।
-              </div>
-
-              {/* Setting 1: Operator / User Email */}
-              <div className="space-y-1">
-                <label className="block text-[11px] font-bold text-stone-900">
-                  ১. ইউজারের ইমেইল (Operator Email - সেভ থাকবে):
+              <div>
+                <label className="block text-[11px] font-bold text-stone-900 mb-1">
+                  এডমিনের WhatsApp মোবাইল নম্বর:
                 </label>
-                <input
-                  type="email"
-                  value={currentUserEmail}
-                  onChange={e => setCurrentUserEmail(e.target.value)}
-                  required
-                  className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-stone-900"
-                  placeholder="user@windygroup.com"
-                />
-              </div>
-
-              {/* Setting 2: Admin Recipient Email(s) */}
-              <div className="space-y-1 pt-1.5 border-t border-stone-200">
-                <label className="block text-[11px] font-bold text-stone-900">
-                  ২. এডমিন প্রাপক ইমেইল (কমা দিয়ে একাধিক লেখা যাবে):
-                </label>
-                <textarea
-                  rows={2}
-                  value={adminRecipientEmails}
-                  onChange={e => setAdminRecipientEmails(e.target.value)}
-                  required
-                  className="w-full border border-stone-300 p-2 rounded text-xs font-mono text-stone-900"
-                  placeholder="017mattakin@gmail.com, admin@windygroup.com"
-                />
-              </div>
-
-              {/* Setting 3: Admin WhatsApp Number */}
-              <div className="space-y-1 pt-1.5 border-t border-stone-200">
-                <label className="block text-[11px] font-bold text-stone-900">
-                  ৩. এডমিনের WhatsApp মোবাইল নম্বর:
-                </label>
+                <p className="text-[10px] text-stone-500 mb-1.5">
+                  যে নম্বরে দিন শেষের একীভূত রিপোর্ট যাবে (যেমন: 01711000000)
+                </p>
                 <input
                   type="text"
                   value={adminWhatsAppNumber}
                   onChange={e => setAdminWhatsAppNumber(e.target.value)}
                   required
-                  className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-emerald-800"
                   placeholder="01711000000"
+                  className="w-full border-2 border-emerald-400 p-2.5 rounded text-sm font-mono font-bold text-emerald-900 outline-none"
                 />
               </div>
 
-              {/* Supabase Schema Helper */}
-              <div className="space-y-1 pt-1.5 border-t border-stone-200">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-[10px] text-stone-500 uppercase">
-                    Supabase Visitors Table SQL
-                  </span>
-                  <button
-                    type="button"
-                    onClick={copySqlCode}
-                    className="text-amber-700 font-bold text-[10px] hover:underline flex items-center gap-1 cursor-pointer"
-                  >
-                    <Copy size={11} /> {copiedSql ? 'কপি হয়েছে!' : 'SQL কপি'}
-                  </button>
-                </div>
+              <div>
+                <label className="block text-[11px] font-bold text-stone-900 mb-1">
+                  প্রেরকের পরিচয় / অপারেটরের নাম (ঐচ্ছিক):
+                </label>
+                <input
+                  type="text"
+                  value={operatorIdentity}
+                  onChange={e => setOperatorIdentity(e.target.value)}
+                  placeholder="Gate 1 Security"
+                  className="w-full border border-stone-300 p-2 rounded text-xs outline-none"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-stone-200">
@@ -1777,9 +1060,9 @@ ${lines.length > 0 ? lines.join('\n') : 'কোনো ভিজিটর এন�
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-stone-900 hover:bg-black text-white font-bold rounded flex items-center gap-1.5 cursor-pointer"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Check size={14} className="text-amber-400" />
+                  <Check size={14} />
                   সেভ করুন
                 </button>
               </div>
