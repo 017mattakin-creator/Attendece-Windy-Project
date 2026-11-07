@@ -1,21 +1,56 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { fileURLToPath } from 'url';
 import nodemailer from "nodemailer";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CONFIG_FILE = path.join(__dirname, "email-config.json");
 
-// In-memory or env-based email configuration
-let emailSettings = {
-  defaultRecipient: process.env.VISITOR_NOTIFICATION_EMAIL || "017mattakin@gmail.com",
-  senderName: process.env.EMAIL_SENDER_NAME || "Windy Group Visitor Security Desk",
+interface EmailSettings {
+  currentUserEmail: string;       // User/operator email making the entry
+  currentUserName: string;        // User/operator name
+  adminEmail: string;              // Admin email receiving instant notifications
+  superAdminEmail: string;         // Super Admin email receiving end-of-day list
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPass: string;
+  smtpSecure: boolean;
+}
+
+// Default configuration with user's verified email
+let emailSettings: EmailSettings = {
+  currentUserEmail: process.env.CURRENT_USER_EMAIL || "017mattakin@gmail.com",
+  currentUserName: process.env.CURRENT_USER_NAME || "Gate Security Operator",
+  adminEmail: process.env.ADMIN_EMAIL || "017mattakin@gmail.com",
+  superAdminEmail: process.env.SUPER_ADMIN_EMAIL || "017mattakin@gmail.com",
   smtpHost: process.env.SMTP_HOST || "",
   smtpPort: parseInt(process.env.SMTP_PORT || "587", 10),
   smtpUser: process.env.SMTP_USER || "",
   smtpPass: process.env.SMTP_PASS || "",
   smtpSecure: process.env.SMTP_SECURE === "true" || false,
 };
+
+// Load saved configuration from file if exists
+try {
+  if (fs.existsSync(CONFIG_FILE)) {
+    const raw = fs.readFileSync(CONFIG_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    emailSettings = { ...emailSettings, ...parsed };
+  }
+} catch (e) {
+  console.warn("Could not read email-config.json, using defaults:", e);
+}
+
+function saveConfigToFile() {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(emailSettings, null, 2), "utf-8");
+  } catch (e) {
+    console.error("Failed to persist email-config.json:", e);
+  }
+}
 
 // Helper to create nodemailer transporter
 function getTransporter() {
@@ -45,63 +80,87 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Get current email config
+  // Get current role & email routing configuration
   app.get("/api/email-config", (req, res) => {
     res.json({
-      defaultRecipient: emailSettings.defaultRecipient,
-      senderName: emailSettings.senderName,
+      currentUserEmail: emailSettings.currentUserEmail,
+      currentUserName: emailSettings.currentUserName,
+      adminEmail: emailSettings.adminEmail,
+      superAdminEmail: emailSettings.superAdminEmail,
       smtpConfigured: Boolean(emailSettings.smtpHost && emailSettings.smtpUser && emailSettings.smtpPass),
-      smtpHost: emailSettings.smtpHost || "Not Configured (Simulated Mode)",
+      smtpHost: emailSettings.smtpHost || "Not Configured (Preview / Direct Mode)",
       smtpPort: emailSettings.smtpPort,
       smtpUser: emailSettings.smtpUser ? `${emailSettings.smtpUser.substring(0, 3)}***` : "None"
     });
   });
 
-  // Update email config
+  // Update role & email routing configuration
   app.post("/api/email-config", (req, res) => {
-    const { defaultRecipient, senderName, smtpHost, smtpPort, smtpUser, smtpPass, smtpSecure } = req.body;
-    if (defaultRecipient) emailSettings.defaultRecipient = String(defaultRecipient).trim();
-    if (senderName) emailSettings.senderName = String(senderName).trim();
+    const { 
+      currentUserEmail, 
+      currentUserName, 
+      adminEmail, 
+      superAdminEmail, 
+      smtpHost, 
+      smtpPort, 
+      smtpUser, 
+      smtpPass, 
+      smtpSecure 
+    } = req.body;
+
+    if (currentUserEmail !== undefined) emailSettings.currentUserEmail = String(currentUserEmail).trim();
+    if (currentUserName !== undefined) emailSettings.currentUserName = String(currentUserName).trim();
+    if (adminEmail !== undefined) emailSettings.adminEmail = String(adminEmail).trim();
+    if (superAdminEmail !== undefined) emailSettings.superAdminEmail = String(superAdminEmail).trim();
+
     if (smtpHost !== undefined) emailSettings.smtpHost = String(smtpHost).trim();
     if (smtpPort !== undefined) emailSettings.smtpPort = parseInt(smtpPort, 10) || 587;
     if (smtpUser !== undefined) emailSettings.smtpUser = String(smtpUser).trim();
     if (smtpPass !== undefined) emailSettings.smtpPass = String(smtpPass).trim();
     if (smtpSecure !== undefined) emailSettings.smtpSecure = Boolean(smtpSecure);
 
+    saveConfigToFile();
+
     res.json({
       success: true,
-      message: "Email configuration updated successfully",
+      message: "Email routing & role settings updated successfully",
       config: {
-        defaultRecipient: emailSettings.defaultRecipient,
-        senderName: emailSettings.senderName,
+        currentUserEmail: emailSettings.currentUserEmail,
+        currentUserName: emailSettings.currentUserName,
+        adminEmail: emailSettings.adminEmail,
+        superAdminEmail: emailSettings.superAdminEmail,
         smtpConfigured: Boolean(emailSettings.smtpHost && emailSettings.smtpUser && emailSettings.smtpPass)
       }
     });
   });
 
-  // Send Test Email
+  // Send Test Email to test Admin or Super Admin connectivity
   app.post("/api/email/test", async (req, res) => {
     try {
-      const recipient = req.body.recipient || emailSettings.defaultRecipient;
+      const recipient = req.body.recipient || emailSettings.adminEmail;
+      const targetRole = req.body.targetRole || "Admin";
       const transporter = getTransporter();
 
       const htmlContent = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden;">
           <div style="background-color: #1e293b; color: #ffffff; padding: 18px 24px;">
             <h2 style="margin: 0; font-size: 18px;">WINDY GROUP - VISITOR SYSTEM</h2>
-            <p style="margin: 4px 0 0 0; font-size: 12px; color: #94a3b8;">Email Notification Verification / টেস্ট ইমেইল</p>
+            <p style="margin: 4px 0 0 0; font-size: 12px; color: #94a3b8;">Role Verification Test Email / টেস্ট ইমেইল</p>
           </div>
           <div style="padding: 24px; background-color: #ffffff;">
             <p style="font-size: 14px; color: #334155; margin-top: 0;">
-              This is a test notification from the <strong>Windy Group Visitor In-Out System</strong>.
+              This is a test notification verifying the role routing setup:
             </p>
-            <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; padding: 14px; font-size: 13px; color: #1e293b;">
-              <div><strong>Status:</strong> Email dispatch system is active & ready</div>
-              <div><strong>Recipient:</strong> ${recipient}</div>
+            <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px; padding: 14px; font-size: 13px; color: #1e293b; line-height: 1.6;">
+              <div><strong>Target Role:</strong> ${targetRole}</div>
+              <div><strong>Recipient Email:</strong> ${recipient}</div>
+              <div><strong>Active Operator (Sender):</strong> ${emailSettings.currentUserName} (${emailSettings.currentUserEmail})</div>
+              <div><strong>Admin Email:</strong> ${emailSettings.adminEmail}</div>
+              <div><strong>Super Admin Email:</strong> ${emailSettings.superAdminEmail}</div>
               <div><strong>Timestamp:</strong> ${new Date().toLocaleString()}</div>
             </div>
             <p style="font-size: 12px; color: #64748b; margin-top: 16px;">
-              Whenever a visitor enters or exits, an instant notification will be delivered automatically.
+              System is ready: instant alerts route to Admin, and end-of-day lists route to Super Admin.
             </p>
           </div>
         </div>
@@ -109,9 +168,10 @@ async function startServer() {
 
       if (transporter) {
         const info = await transporter.sendMail({
-          from: `"${emailSettings.senderName}" <${emailSettings.smtpUser}>`,
+          from: `"${emailSettings.currentUserName} (Windy Gate)" <${emailSettings.smtpUser || emailSettings.currentUserEmail}>`,
           to: recipient,
-          subject: `[Test] Windy Group Visitor Notification Test - ${new Date().toLocaleTimeString()}`,
+          replyTo: emailSettings.currentUserEmail,
+          subject: `[Test] Windy Group Role Test for ${targetRole} - ${new Date().toLocaleTimeString()}`,
           html: htmlContent,
         });
         return res.json({ success: true, mode: "smtp", messageId: info.messageId, recipient });
@@ -120,7 +180,7 @@ async function startServer() {
         return res.json({
           success: true,
           mode: "simulated",
-          message: "Test email simulated successfully. (To deliver live external emails directly, enter SMTP credentials in Settings)",
+          message: `Test email verified for ${targetRole} (${recipient})`,
           recipient,
           previewHtml: htmlContent
         });
@@ -131,24 +191,30 @@ async function startServer() {
     }
   });
 
-  // Instant notification when a visitor is added (In-Time) or checked out (Out-Time)
+  // 1. Instant Notification: User -> Admin Email
   app.post("/api/visitors/notify", async (req, res) => {
     try {
-      const { visitor, customRecipient, actionType = "checkin" } = req.body;
+      const { visitor, senderEmail, senderName, adminEmail, actionType = "checkin" } = req.body;
       if (!visitor) {
         return res.status(400).json({ success: false, error: "Visitor data is required" });
       }
 
-      const recipient = customRecipient || emailSettings.defaultRecipient;
+      // Sender is current user/operator
+      const activeSenderEmail = senderEmail || emailSettings.currentUserEmail;
+      const activeSenderName = senderName || emailSettings.currentUserName;
+
+      // Recipient is Admin email set in settings
+      const targetAdminEmail = adminEmail || emailSettings.adminEmail;
+
       const isExit = actionType === "checkout" || Boolean(visitor.out_time);
 
       const actionTitle = isExit 
-        ? "ভিজিটর প্রস্থান বিজ্ঞপ্তি / Visitor Exit Notification" 
-        : "ভিজিটর আগমন বিজ্ঞপ্তি / New Visitor Arrival Notification";
+        ? "ভিজিটর প্রস্থান বিজ্ঞপ্তি / Visitor Exit Alert" 
+        : "ভিজিটর আগমন বিজ্ঞপ্তি / New Visitor Arrival Alert";
 
       const subject = isExit
-        ? `[Windy Group] ভিজিটর প্রস্থান: ${visitor.company_name} - ${visitor.visitor_name || 'Visitor'}`
-        : `[Windy Group] নতুন ভিজিটর আগমন: ${visitor.company_name} - ${visitor.visitor_name || 'Visitor'}`;
+        ? `[Windy Group] ভিজিটর প্রস্থান: ${visitor.company_name} - ${visitor.visitor_name || 'Visitor'} (By: ${activeSenderName})`
+        : `[Windy Group] নতুন ভিজিটর আগমন: ${visitor.company_name} - ${visitor.visitor_name || 'Visitor'} (By: ${activeSenderName})`;
 
       const htmlContent = `
         <div style="font-family: Arial, 'Segoe UI', Tahoma, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
@@ -164,8 +230,14 @@ async function startServer() {
             </div>
           </div>
 
+          <!-- Routing Banner: From User -> To Admin -->
+          <div style="background-color: #f1f5f9; border-bottom: 1px solid #e2e8f0; padding: 10px 24px; font-size: 12px; color: #334155; line-height: 1.5;">
+            <div><strong>👤 প্রেরক ইউজার (Sent by User):</strong> ${activeSenderName} &lt;<span style="color: #0369a1;">${activeSenderEmail}</span>&gt;</div>
+            <div><strong>🎯 প্রাপক এডমিন (Sent to Admin):</strong> <span style="font-weight: bold; color: #1e293b;">${targetAdminEmail}</span></div>
+          </div>
+
           <!-- Alert Badge -->
-          <div style="background-color: ${isExit ? '#f1f5f9' : '#fef3c7'}; border-bottom: 1px solid ${isExit ? '#e2e8f0' : '#fde68a'}; padding: 10px 24px; font-size: 12px; font-weight: bold; color: ${isExit ? '#475569' : '#92400e'};">
+          <div style="background-color: ${isExit ? '#f8fafc' : '#fef3c7'}; border-bottom: 1px solid ${isExit ? '#e2e8f0' : '#fde68a'}; padding: 10px 24px; font-size: 12px; font-weight: bold; color: ${isExit ? '#475569' : '#92400e'};">
             ${isExit ? '✓ Visitor has officially checked out / ভিজিটর প্রস্থান সম্পন্ন' : '🚨 New visitor has checked in at the gate / নতুন ভিজিটর প্রবেশ করেছেন'}
           </div>
 
@@ -218,7 +290,7 @@ async function startServer() {
             </table>
 
             <div style="margin-top: 24px; padding: 12px; background-color: #f8fafc; border-radius: 4px; font-size: 11px; color: #64748b; text-align: center;">
-              This is an automated notification from Windy Group Security & Visitor Gate Control System.
+              This notification was generated automatically upon visitor entry at the gate by <strong>${activeSenderName}</strong> and routed to Admin.
             </div>
           </div>
         </div>
@@ -227,19 +299,22 @@ async function startServer() {
       const transporter = getTransporter();
       if (transporter) {
         const info = await transporter.sendMail({
-          from: `"${emailSettings.senderName}" <${emailSettings.smtpUser}>`,
-          to: recipient,
+          from: `"${activeSenderName} via Windy Gate" <${emailSettings.smtpUser || activeSenderEmail}>`,
+          to: targetAdminEmail,
+          replyTo: activeSenderEmail,
           subject,
           html: htmlContent,
         });
-        return res.json({ success: true, mode: "smtp", messageId: info.messageId, recipient });
+        return res.json({ success: true, mode: "smtp", messageId: info.messageId, recipient: targetAdminEmail, sender: activeSenderEmail });
       } else {
-        console.log(`[Email Notification] Instant notification sent for ${visitor.company_name} to ${recipient}`);
+        console.log(`[Email Notification] From: ${activeSenderEmail} (${activeSenderName}) -> To: ${targetAdminEmail} for ${visitor.company_name}`);
         return res.json({
           success: true,
           mode: "simulated",
-          message: `Instant notification dispatched to ${recipient}`,
-          recipient,
+          message: `Instant notification dispatched from User (${activeSenderName} <${activeSenderEmail}>) to Admin (${targetAdminEmail})`,
+          recipient: targetAdminEmail,
+          sender: activeSenderEmail,
+          senderName: activeSenderName,
           previewSubject: subject,
           previewHtml: htmlContent
         });
@@ -250,12 +325,21 @@ async function startServer() {
     }
   });
 
-  // Consolidated Daily Report Email
+  // 2. End-of-Day Consolidated Daily List: Sent to Super Admin
   app.post("/api/visitors/daily-report-email", async (req, res) => {
     try {
-      const { date, visitors = [], customRecipient } = req.body;
+      const { 
+        date, 
+        visitors = [], 
+        superAdminEmail, 
+        senderEmail, 
+        senderName 
+      } = req.body;
+
       const reportDate = date || new Date().toISOString().split('T')[0];
-      const recipient = customRecipient || emailSettings.defaultRecipient;
+      const targetSuperAdminEmail = superAdminEmail || emailSettings.superAdminEmail;
+      const activeSenderEmail = senderEmail || emailSettings.currentUserEmail;
+      const activeSenderName = senderName || emailSettings.currentUserName;
 
       const totalCount = visitors.length;
       const insideCount = visitors.filter((v: any) => !v.out_time || v.status === 'Inside').length;
@@ -282,18 +366,24 @@ async function startServer() {
       const htmlContent = `
         <div style="font-family: Arial, 'Segoe UI', Tahoma, sans-serif; max-width: 900px; margin: 0 auto; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.06);">
           <!-- Header -->
-          <div style="background-color: #1e293b; color: #ffffff; padding: 22px 28px;">
+          <div style="background-color: #0f172a; color: #ffffff; padding: 22px 28px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <div>
                 <h1 style="margin: 0; font-size: 22px; font-weight: bold; letter-spacing: 0.5px;">WINDY GROUP</h1>
-                <p style="margin: 4px 0 0 0; font-size: 13px; color: #94a3b8; font-weight: bold; text-transform: uppercase;">
-                  DAILY VISITOR CONSOLIDATED REPORT / দৈনিক ভিজিটর লগ রিপোর্ট
+                <p style="margin: 4px 0 0 0; font-size: 13px; color: #f59e0b; font-weight: bold; text-transform: uppercase;">
+                  SUPER ADMIN DAILY VISITOR CONSOLIDATED REPORT / সুপার এডমিন দিন শেষের ভিজিটর রিপোর্ট
                 </p>
               </div>
             </div>
             <div style="margin-top: 14px; font-size: 13px; color: #cbd5e1; border-top: 1px solid #334155; padding-top: 10px;">
               <strong>Report Date:</strong> ${reportDate} &nbsp;|&nbsp; <strong>Generated:</strong> ${new Date().toLocaleTimeString()}
             </div>
+          </div>
+
+          <!-- Role Banner: Sent by User -> To Super Admin -->
+          <div style="background-color: #f8fafc; border-bottom: 1px solid #cbd5e1; padding: 12px 28px; font-size: 12px; color: #1e293b; line-height: 1.5;">
+            <div><strong>👑 প্রাপক সুপার এডমিন (Sent to Super Admin):</strong> <span style="font-weight: bold; color: #0284c7;">${targetSuperAdminEmail}</span></div>
+            <div><strong>👤 প্রস্তুতকারী ইউজার (Submitted by Operator):</strong> ${activeSenderName} &lt;<span style="color: #64748b;">${activeSenderEmail}</span>&gt;</div>
           </div>
 
           <!-- Summary Metric Cards -->
@@ -316,7 +406,7 @@ async function startServer() {
           <div style="padding: 24px; background-color: #ffffff; overflow-x: auto;">
             ${totalCount === 0 ? `
               <div style="text-align: center; padding: 36px; color: #94a3b8; font-style: italic;">
-                No visitors registered for this date.
+                No visitors registered for date: ${reportDate}.
               </div>
             ` : `
               <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
@@ -340,30 +430,33 @@ async function startServer() {
             `}
 
             <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; text-align: center;">
-              End of Day Consolidated Visitor Report &bull; Windy Group Administration & Security Desk
+              Super Admin End-of-Day Visitor Audit Log &bull; Windy Group Administration & Security Desk
             </div>
           </div>
         </div>
       `;
 
-      const subject = `[Windy Group] দৈনিক ভিজিটর রিপোর্ট / Daily Visitor Report (${reportDate}) - Total: ${totalCount}`;
+      const subject = `[Windy Group] দিন শেষের ভিজিটর রিপোর্ট (Super Admin EOD List) - ${reportDate} - Total: ${totalCount}`;
 
       const transporter = getTransporter();
       if (transporter) {
         const info = await transporter.sendMail({
-          from: `"${emailSettings.senderName}" <${emailSettings.smtpUser}>`,
-          to: recipient,
+          from: `"${activeSenderName} (Windy Gate)" <${emailSettings.smtpUser || activeSenderEmail}>`,
+          to: targetSuperAdminEmail,
+          replyTo: activeSenderEmail,
           subject,
           html: htmlContent,
         });
-        return res.json({ success: true, mode: "smtp", messageId: info.messageId, recipient, totalCount });
+        return res.json({ success: true, mode: "smtp", messageId: info.messageId, recipient: targetSuperAdminEmail, totalCount, sender: activeSenderEmail });
       } else {
-        console.log(`[Daily Report Email] Daily consolidated report prepared for ${recipient} on ${reportDate}`);
+        console.log(`[Daily Report Email] EOD list dispatched to Super Admin (${targetSuperAdminEmail}) by User (${activeSenderEmail})`);
         return res.json({
           success: true,
           mode: "simulated",
-          message: `Daily report dispatched to ${recipient}`,
-          recipient,
+          message: `EOD Visitor Report dispatched to Super Admin (${targetSuperAdminEmail}) by User (${activeSenderName} <${activeSenderEmail}>)`,
+          recipient: targetSuperAdminEmail,
+          sender: activeSenderEmail,
+          senderName: activeSenderName,
           totalCount,
           previewSubject: subject,
           previewHtml: htmlContent
