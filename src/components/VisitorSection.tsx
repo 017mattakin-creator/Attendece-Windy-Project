@@ -20,7 +20,11 @@ import {
   AlertCircle,
   FileSpreadsheet,
   FileDown,
-  Copy
+  Copy,
+  Users,
+  ShieldCheck,
+  Ban,
+  ChevronDown
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
@@ -40,9 +44,21 @@ export interface VisitorRecord {
   out_time?: string;
   phone_number?: string;
   id_card_no?: string;
-  status: 'Inside' | 'Checked Out';
+  total_persons?: number;
+  status: 'Inside' | 'Not Permitted' | 'Checked Out';
   remarks?: string;
   created_at?: string;
+}
+
+interface BatchVisitorRow {
+  visitor_name: string;
+  company_name: string;
+  who_meet: string;
+  purpose: string;
+  phone_number: string;
+  total_persons: number;
+  id_card_no: string;
+  in_time: string;
 }
 
 interface Props {
@@ -70,17 +86,15 @@ const getTodayString = (): string => {
   return `${y}-${m}-${day}`;
 };
 
-// Clean phone number for WhatsApp wa.me / api.whatsapp.com
 const formatWhatsAppPhone = (phone: string): string => {
   if (!phone) return '';
   let clean = phone.replace(/[^0-9]/g, '');
   if (clean.startsWith('0')) {
-    clean = '88' + clean; // Bangladesh prefix
+    clean = '88' + clean;
   }
   return clean;
 };
 
-// Fast 1-tap purpose options for mobile
 const QUICK_PURPOSES = [
   'অফিসিয়াল মিটিং',
   'ইন্টারভিউ',
@@ -100,33 +114,45 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
   // Modals
   const [showEditModal, setShowEditModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  
-  // Operator Identity
+  const [checkoutModalRecord, setCheckoutModalRecord] = useState<VisitorRecord | null>(null);
+  const [checkoutTimeInput, setCheckoutTimeInput] = useState<string>('');
+
+  // Operator Identity & WhatsApp
   const [operatorIdentity, setOperatorIdentity] = useState<string>(() => {
     return localStorage.getItem('saved_operator_user_email') || 'Gate Security';
   });
-
-  // Admin WhatsApp Number (একমাত্র প্রয়োজনীয় কনফিগারেশন)
   const [adminWhatsAppNumber, setAdminWhatsAppNumber] = useState<string>(() => {
     return localStorage.getItem('admin_whatsapp_number') || '017mattakin@gmail.com';
   });
 
-  // Clean form state for quick mobile entry
-  const [formData, setFormData] = useState<Partial<VisitorRecord>>({
-    sl: 1,
-    date: getTodayString(),
-    visitor_name: '',
-    company_name: '',
-    who_meet: '',
-    purpose: '',
-    in_time: formatCurrentTime(),
-    out_time: '',
-    phone_number: '',
-    id_card_no: '',
-    status: 'Inside',
-    remarks: ''
-  });
-  
+  // Batch Multi-Entry Form State (একসাথে একাধিক এন্ট্রি)
+  const [batchRows, setBatchRows] = useState<BatchVisitorRow[]>([
+    {
+      visitor_name: '',
+      company_name: '',
+      who_meet: '',
+      purpose: 'অফিসিয়াল মিটিং',
+      phone_number: '',
+      total_persons: 1,
+      id_card_no: '',
+      in_time: formatCurrentTime()
+    }
+  ]);
+  const [entryDate, setEntryDate] = useState<string>(getTodayString());
+  const [entryInTime, setEntryInTime] = useState<string>(formatCurrentTime());
+  const [liveClock, setLiveClock] = useState<string>(formatCurrentTime());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveClock(formatCurrentTime());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Employee search modal / dropdown state for phone-friendly popup
+  const [activeRowIndexForStaff, setActiveRowIndexForStaff] = useState<number | null>(null);
+  const [staffSearchQuery, setStaffSearchQuery] = useState('');
+
   const [editingRecord, setEditingRecord] = useState<VisitorRecord | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
@@ -134,19 +160,16 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
     fetchVisitors();
   }, []);
 
-  // Save Settings
   const handleSaveSettings = (opId: string, waNum: string) => {
     setOperatorIdentity(opId);
     setAdminWhatsAppNumber(waNum);
     localStorage.setItem('saved_operator_user_email', opId);
     localStorage.setItem('admin_whatsapp_number', waNum);
-
     setActionMessage({ type: 'success', text: 'WhatsApp নম্বর সফলভাবে সেভ হয়েছে।' });
     setShowSettingsModal(false);
     setTimeout(() => setActionMessage(null), 3000);
   };
 
-  // Fetch visitors
   const fetchVisitors = async () => {
     setLoading(true);
     let loadedFromDb = false;
@@ -171,7 +194,8 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
           out_time: v.out_time || '',
           phone_number: v.phone_number || '',
           id_card_no: v.id_card_no || '',
-          status: v.out_time ? 'Checked Out' : (v.status || 'Inside'),
+          total_persons: Number(v.total_persons) || 1,
+          status: v.status || (v.out_time ? 'Checked Out' : 'Inside'),
           remarks: v.remarks || '',
           created_at: v.created_at
         }));
@@ -196,120 +220,207 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
     setLoading(false);
   };
 
-  // Save new visitor
-  const handleSaveNewVisitor = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.company_name?.trim() || !formData.who_meet?.trim() || !formData.purpose?.trim()) {
-      alert('অনুগ্রহ করে কোম্পানির নাম, কার সাথে দেখা করবেন ও উদ্দেশ্য পূরণ করুন।');
+  // Add row to batch entry
+  const handleAddBatchRow = () => {
+    const lastRow = batchRows[batchRows.length - 1];
+    setBatchRows([
+      ...batchRows,
+      {
+        visitor_name: '',
+        company_name: lastRow?.company_name || '', // Carry over company for convenience
+        who_meet: lastRow?.who_meet || '',         // Carry over who to meet
+        purpose: lastRow?.purpose || 'অফিসিয়াল মিটিং',
+        phone_number: '',
+        total_persons: 1,
+        id_card_no: '',
+        in_time: formatCurrentTime()
+      }
+    ]);
+  };
+
+  const handleRemoveBatchRow = (index: number) => {
+    if (batchRows.length === 1) {
+      alert('কমপক্ষে একটি এন্ট্রি রো থাকতে হবে।');
       return;
     }
+    setBatchRows(batchRows.filter((_, i) => i !== index));
+  };
 
-    const targetDate = formData.date || getTodayString();
-    const dateRecords = visitors.filter(v => v.date === targetDate);
-    const nextSl = dateRecords.length > 0 ? Math.max(...dateRecords.map(r => r.sl)) + 1 : 1;
-
-    const newRecord: VisitorRecord = {
-      id: `v_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      sl: nextSl,
-      date: targetDate,
-      visitor_name: formData.visitor_name?.trim() || '',
-      company_name: formData.company_name.trim(),
-      who_meet: formData.who_meet.trim(),
-      purpose: formData.purpose.trim(),
-      in_time: formData.in_time?.trim() || formatCurrentTime(),
-      out_time: '',
-      phone_number: formData.phone_number?.trim() || '',
-      id_card_no: formData.id_card_no?.trim() || '',
-      status: 'Inside',
-      remarks: formData.remarks || '',
-      created_at: new Date().toISOString()
-    };
-
-    // Save to Supabase
-    try {
-      const { data, error } = await supabase.from('visitors').insert([{
-        sl: newRecord.sl,
-        date: newRecord.date,
-        visitor_name: newRecord.visitor_name,
-        company_name: newRecord.company_name,
-        who_meet: newRecord.who_meet,
-        purpose: newRecord.purpose,
-        in_time: newRecord.in_time,
-        out_time: null,
-        phone_number: newRecord.phone_number,
-        id_card_no: newRecord.id_card_no,
-        status: 'Inside',
-        remarks: newRecord.remarks
-      }]).select();
-
-      if (!error && data && data[0]) {
-        newRecord.id = data[0].id;
+  // Save All Batch Entries at Once (একসাথে সেভ)
+  const handleSaveAllBatchEntries = async (e: React.FormEvent) => {
+    e.preventDefault();
+    for (let i = 0; i < batchRows.length; i++) {
+      const row = batchRows[i];
+      if (!row.company_name?.trim() || !row.who_meet?.trim() || !row.purpose?.trim()) {
+        alert(`এন্ট্রি #${i + 1}-এ কোম্পানির নাম, কার সাথে দেখা করবেন ও উদ্দেশ্য পূরণ করুন।`);
+        return;
       }
-    } catch (err) {
-      console.warn('Supabase insert fallback to local storage:', err);
     }
 
-    const updated = [newRecord, ...visitors];
+    const targetDate = entryDate || getTodayString();
+    const dateRecords = visitors.filter(v => v.date === targetDate);
+    let nextSl = dateRecords.length > 0 ? Math.max(...dateRecords.map(r => r.sl)) + 1 : 1;
+
+    const newRecordsToInsert: VisitorRecord[] = [];
+    const dbPayloads: any[] = [];
+
+    batchRows.forEach((row) => {
+      const rec: VisitorRecord = {
+        id: `v_${Date.now()}_${Math.random().toString(36).substring(2, 6)}_${nextSl}`,
+        sl: nextSl++,
+        date: targetDate,
+        visitor_name: row.visitor_name.trim(),
+        company_name: row.company_name.trim(),
+        who_meet: row.who_meet.trim(),
+        purpose: row.purpose.trim(),
+        in_time: row.in_time || formatCurrentTime(),
+        out_time: '',
+        phone_number: row.phone_number.trim(),
+        id_card_no: row.id_card_no.trim(),
+        total_persons: Number(row.total_persons) || 1,
+        status: 'Inside',
+        created_at: new Date().toISOString()
+      };
+      newRecordsToInsert.push(rec);
+      dbPayloads.push({
+        sl: rec.sl,
+        date: rec.date,
+        visitor_name: rec.visitor_name,
+        company_name: rec.company_name,
+        who_meet: rec.who_meet,
+        purpose: rec.purpose,
+        in_time: rec.in_time,
+        out_time: null,
+        phone_number: rec.phone_number,
+        id_card_no: rec.id_card_no,
+        total_persons: rec.total_persons,
+        status: 'Inside'
+      });
+    });
+
+    try {
+      const { data, error } = await supabase.from('visitors').insert(dbPayloads).select();
+      if (!error && data) {
+        data.forEach((d: any, idx: number) => {
+          if (newRecordsToInsert[idx]) {
+            newRecordsToInsert[idx].id = d.id;
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Supabase batch insert fallback:', err);
+    }
+
+    const updated = [...newRecordsToInsert, ...visitors];
     setVisitors(updated);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
 
-    // Clear form inputs for next entry
-    setFormData({
-      sl: nextSl + 1,
-      date: targetDate,
+    // Reset batch form to 1 clean row
+    setBatchRows([{
       visitor_name: '',
       company_name: '',
       who_meet: '',
-      purpose: '',
-      in_time: formatCurrentTime(),
-      out_time: '',
+      purpose: 'অফিসিয়াল মিটিং',
       phone_number: '',
+      total_persons: 1,
       id_card_no: '',
-      status: 'Inside',
-      remarks: ''
-    });
+      in_time: formatCurrentTime()
+    }]);
+    setEntryInTime(formatCurrentTime());
 
     setActionMessage({ 
       type: 'success', 
-      text: `✅ ${newRecord.company_name} - ভিজিটর এন্ট্রি সংরক্ষিত হয়েছে এবং উপরের "ভিতরে আছেন" লিস্টে যোগ হয়েছে।` 
+      text: `✅ সফলভাবে ${newRecordsToInsert.length}টি ভিজিটর এন্ট্রি একসাথে সংরক্ষিত হয়েছে!` 
     });
-    setTimeout(() => setActionMessage(null), 3500);
+    setTimeout(() => setActionMessage(null), 4000);
   };
 
-  // 1-CLICK OUT: Immediately records exit time and removes the visitor from the top Inside list!
-  const handleQuickCheckout = async (record: VisitorRecord) => {
-    const exitTime = formatCurrentTime();
+  // Duplicate an existing record into the batch form
+  const handleDuplicateRecord = (record: VisitorRecord) => {
+    setBatchRows([
+      {
+        company_name: record.company_name || '',
+        visitor_name: '',
+        who_meet: record.who_meet || '',
+        purpose: record.purpose || '',
+        phone_number: record.phone_number || '',
+        total_persons: record.total_persons || 1,
+        id_card_no: record.id_card_no || '',
+        in_time: formatCurrentTime()
+      }
+    ]);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setActionMessage({ type: 'info', text: `📋 ${record.company_name} এর তথ্য কপি করা হয়েছে। নতুন ভিজিটরের নাম বসিয়ে সেভ করুন।` });
+    setTimeout(() => setActionMessage(null), 4000);
+  };
+
+  // Open Checkout Modal
+  const handleOpenCheckoutModal = (record: VisitorRecord) => {
+    setCheckoutModalRecord(record);
+    setCheckoutTimeInput(formatCurrentTime());
+  };
+
+  // Confirm Checkout with Popup Time
+  const handleConfirmCheckout = async () => {
+    if (!checkoutModalRecord) return;
+    const exitTime = checkoutTimeInput || formatCurrentTime();
     const updatedRecord: VisitorRecord = {
-      ...record,
-      out_time: exitTime,
-      status: 'Checked Out'
+      ...checkoutModalRecord,
+      status: 'Checked Out',
+      out_time: exitTime
     };
 
-    // Update in Supabase
     try {
-      if (typeof record.id === 'number') {
+      if (typeof checkoutModalRecord.id === 'number') {
         await supabase.from('visitors').update({
-          out_time: exitTime,
-          status: 'Checked Out'
-        }).eq('id', record.id);
+          status: 'Checked Out',
+          out_time: exitTime
+        }).eq('id', checkoutModalRecord.id);
       }
     } catch (err) {
       console.warn('Supabase checkout error:', err);
     }
 
-    // Update local state: removes from top 'Inside' list
+    const updatedList = visitors.map(v => v.id === checkoutModalRecord.id ? updatedRecord : v);
+    setVisitors(updatedList);
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
+
+    setCheckoutModalRecord(null);
+    setActionMessage({ type: 'success', text: `🚪 ${checkoutModalRecord.company_name} এর প্রস্থান সময় (${exitTime}) সফলভাবে রেকর্ড হয়েছে।` });
+    setTimeout(() => setActionMessage(null), 3500);
+  };
+
+  // Change status (Inside / Not Permitted / Visit Complete)
+  const handleUpdateStatus = async (record: VisitorRecord, newStatus: 'Inside' | 'Not Permitted' | 'Checked Out') => {
+    if (newStatus === 'Checked Out') {
+      handleOpenCheckoutModal(record);
+      return;
+    }
+
+    const updatedRecord: VisitorRecord = {
+      ...record,
+      status: newStatus
+    };
+
+    try {
+      if (typeof record.id === 'number') {
+        await supabase.from('visitors').update({
+          status: newStatus
+        }).eq('id', record.id);
+      }
+    } catch (err) {
+      console.warn('Supabase status update error:', err);
+    }
+
     const updatedList = visitors.map(v => v.id === record.id ? updatedRecord : v);
     setVisitors(updatedList);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
 
-    setActionMessage({ 
-      type: 'info', 
-      text: `🚪 ${record.company_name} এর প্রস্থান সম্পন্ন হয়েছে (আউট সময়: ${exitTime})। ড্যাশবোর্ড থেকে সরানো হয়েছে।` 
-    });
-    setTimeout(() => setActionMessage(null), 3500);
+    setActionMessage({ type: 'success', text: `স্ট্যাটাস আপডেট হয়েছে!` });
+    setTimeout(() => setActionMessage(null), 3000);
   };
 
-  // Update existing record
+  // Update existing record from edit modal
   const handleUpdateRecord = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRecord) return;
@@ -327,7 +438,8 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
           out_time: editingRecord.out_time || null,
           phone_number: editingRecord.phone_number,
           id_card_no: editingRecord.id_card_no,
-          status: editingRecord.out_time ? 'Checked Out' : 'Inside',
+          total_persons: editingRecord.total_persons || 1,
+          status: editingRecord.status,
           remarks: editingRecord.remarks
         }).eq('id', editingRecord.id);
       }
@@ -366,7 +478,7 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
   };
 
   // =========================================================================
-  // ⚡ 1-CLICK WHATSAPP TOTAL SUMMARY (ফুটারের একমাত্র বাটন - চাপলেই আজকের রিপোর্ট)
+  // ⚡ EXACT WHATSAPP REPORT FORMAT
   // =========================================================================
   const handleSendTodayWhatsAppSummary = () => {
     const todayStr = getTodayString();
@@ -377,28 +489,43 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
       return;
     }
 
-    const insideCount = todayRecords.filter(v => !v.out_time || v.status === 'Inside').length;
-    const outCount = todayRecords.length - insideCount;
+    const insideCount = todayRecords.filter(v => v.status === 'Inside' || (!v.out_time && v.status !== 'Not Permitted')).length;
+    const outCount = todayRecords.filter(v => v.status === 'Checked Out' || v.status === 'Not Permitted').length;
 
-    // Sort by SL
     const sorted = [...todayRecords].sort((a, b) => a.sl - b.sl);
 
-    const listLines = sorted.map(v => {
-      const exitStr = v.out_time ? `আউট: ${v.out_time}` : `ভিতরে আছেন 🔴`;
-      const nameStr = v.visitor_name ? ` (${v.visitor_name})` : '';
-      return `${v.sl}. *${v.company_name}*${nameStr}\n   সাক্ষাৎ: ${v.who_meet}\n   ইন: ${v.in_time} | ${exitStr}\n   উদ্দেশ্য: ${v.purpose}`;
+    const listLines = sorted.map((v, i) => {
+      const companionText = (v.total_persons && v.total_persons > 1) ? ` (সাথে আরও ${v.total_persons - 1} জন)` : '';
+      const nameStr = v.visitor_name ? `NAME : ${v.visitor_name}${companionText}` : `NAME : Visitor${companionText}`;
+      
+      const statusText = 
+        v.status === 'Inside' ? 'ভিতরে প্রবেশের অনুমতি চাচ্ছে 🔴' :
+        v.status === 'Not Permitted' ? 'NOT PERMITTED (অনুমতি নেই) ❌' : 'VISIT COMPLETE (ভিজিট সম্পন্ন) 🟢';
+
+      const statusEnum = 
+        v.status === 'Inside' ? 'ENTER PERMISSION' :
+        v.status === 'Not Permitted' ? 'NOT PERMITTED' : 'VISIT COMPLETE';
+
+      return (
+`${i + 1}. COMPANY NAME : ${v.company_name}
+${nameStr}
+সাক্ষাৎ: ${v.who_meet}
+ ইন: ${v.in_time} | ${statusText}
+ উদ্দেশ্য: ${v.purpose}
+STATUS : ${statusEnum}`
+      );
     });
 
     const summaryText = 
-`*📋 WINDY GROUP - আজকের সম্পূর্ণ ভিজিটর রিপোর্ট*
-📅 *তারিখ:* ${todayStr}
-📊 *মোট ভিজিটর:* ${todayRecords.length} জন
-🔴 *ভিতরে আছেন:* ${insideCount} জন
-🟢 *প্রস্থান সম্পন্ন:* ${outCount} জন
+`📋 WINDY GROUP - আজকের সম্পূর্ণ ভিজিটর রিপোর্ট
+📅 তারিখ: ${todayStr}
+📊 মোট ভিজিটর: ${todayRecords.length} জন
+🔴 ভিতরে আছেন: ${insideCount} জন
+🟢 প্রস্থান সম্পন্ন / অন্যান্য: ${outCount} জন
 ━━━━━━━━━━━━━━━━━━
 ${listLines.join('\n\n')}
 ━━━━━━━━━━━━━━━━━━
-👤 *প্রেরক:* ${operatorIdentity}`;
+👤 প্রেরক: ${operatorIdentity}`;
 
     const cleanPhone = formatWhatsAppPhone(adminWhatsAppNumber);
     const waUrl = cleanPhone 
@@ -408,14 +535,10 @@ ${listLines.join('\n\n')}
     window.open(waUrl, '_blank');
   };
 
-  // Filter visitors
   const todayDateStr = getTodayString();
   const todayAllVisitors = visitors.filter(v => v.date === (selectedDate || todayDateStr));
+  const currentlyInsideVisitors = visitors.filter(v => v.status === 'Inside' || (!v.out_time && v.status !== 'Not Permitted' && v.status !== 'Checked Out'));
 
-  // 1. ACTIVE VISITORS CURRENTLY INSIDE (যাঁরা এখনো বের হননি - উপরে থাকবেন)
-  const currentlyInsideVisitors = visitors.filter(v => (!v.out_time || v.status === 'Inside'));
-
-  // 2. Filtered history list
   const historyVisitors = visitors.filter(v => {
     const matchesDate = !selectedDate || v.date === selectedDate;
     const term = searchTerm.toLowerCase().trim();
@@ -430,9 +553,8 @@ ${listLines.join('\n\n')}
     return matchesDate && matchesSearch;
   });
 
-  // Export to Excel
   const exportToExcel = () => {
-    const headers = ['SL', 'Date', 'Company Name', 'Visitor Name', 'Phone', 'Who Meet', 'Purpose', 'In Time', 'Out Time', 'Status', 'Pass No'];
+    const headers = ['SL', 'Date', 'Company Name', 'Visitor Name', 'Phone', 'Who Meet', 'Purpose', 'In Time', 'Out Time', 'Persons', 'Status'];
     const rows = historyVisitors.map((v, i) => [
       v.sl || i + 1,
       v.date,
@@ -443,8 +565,8 @@ ${listLines.join('\n\n')}
       v.purpose,
       v.in_time,
       v.out_time || '',
-      v.status,
-      v.id_card_no || ''
+      v.total_persons || 1,
+      v.status
     ]);
     const sheetData = [headers, ...rows];
     const ws = XLSX.utils.aoa_to_sheet(sheetData);
@@ -463,7 +585,7 @@ ${listLines.join('\n\n')}
             VISITOR IN - OUT REGISTER
           </h2>
           <p className="text-[11px] sm:text-xs text-stone-500 font-medium">
-            ভিতরে থাকা ভিজিটর উপরে থাকবে &bull; ১-ক্লিকেই আউট দিন &bull; নিচে শুধু ১টি WhatsApp বাটন
+            একসাথে একাধিক এন্ট্রি (+ বাটন) &bull; এমপ্লয়ী পপআপ সিলেক্টর &bull; আউট টাইম পপআপ
           </p>
         </div>
 
@@ -471,7 +593,6 @@ ${listLines.join('\n\n')}
           <button
             onClick={() => setShowSettingsModal(true)}
             className="flex items-center gap-1 px-3 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded border border-stone-300 text-xs font-bold cursor-pointer"
-            title="WhatsApp নম্বর সেট করুন"
           >
             <Settings size={14} />
             <span>নম্বর সেটিংস</span>
@@ -496,34 +617,50 @@ ${listLines.join('\n\n')}
         </div>
       )}
 
+      {/* Live Digital Clock Banner */}
+      <div className="bg-stone-900 text-stone-100 p-3.5 rounded-lg mb-6 flex items-center justify-between shadow-md border border-stone-800">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded bg-amber-500/20 text-amber-400 flex items-center justify-center">
+            <Clock className="animate-pulse" size={24} />
+          </div>
+          <div>
+            <div className="text-[10px] text-stone-400 uppercase tracking-widest font-mono font-bold">লাইভ গেট ঘড়ি (Live Clock)</div>
+            <div className="text-xl sm:text-2xl font-mono font-black text-amber-400 tracking-tight">{liveClock}</div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] text-stone-400 uppercase tracking-widest font-bold">তারিখ</div>
+          <div className="text-xs sm:text-sm font-bold text-white font-mono">{entryDate || getTodayString()}</div>
+        </div>
+      </div>
+
       {/* =========================================================================
-          🔥 SECTION 1: বর্তমানে ভিতরে আছেন (CURRENTLY INSIDE - TOP OF DASHBOARD)
-          এখান থেকে "আউট দিন" বাটনে চাপ দিলে ড্যাশবোর্ড থেকে সাথে সাথে চলে যাবে!
+          🔥 SECTION 1: বর্তমানে ভিতরে আছেন (CURRENTLY INSIDE)
           ========================================================================= */}
       <div className="bg-white border-2 border-rose-400 rounded-md shadow-sm p-3 sm:p-4 mb-5">
         <div className="flex items-center justify-between border-b border-rose-100 pb-2.5 mb-3">
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 rounded-full bg-rose-500 animate-ping"></span>
             <h3 className="text-sm font-black text-rose-950 uppercase tracking-wide">
-              বর্তমানে ভিতরে আছেন ({currentlyInsideVisitors.length} জন)
+              বর্তমানে ভিতরে আছেন / অনুমতিপ্রার্থী ({currentlyInsideVisitors.length} জন)
             </h3>
           </div>
           <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-2 py-0.5 rounded">
-            প্রস্থান বাকি আছে
+            ENTER PERMISSION
           </span>
         </div>
 
         {currentlyInsideVisitors.length === 0 ? (
           <div className="py-5 text-center text-emerald-700 font-bold text-xs flex items-center justify-center gap-2 bg-emerald-50/50 rounded border border-emerald-200">
             <CheckCircle2 size={16} className="text-emerald-600" />
-            <span>বর্তমানে কোনো ভিজিটর ভিতরে অবস্থান করছেন না (সবাই প্রস্থান করেছেন)।</span>
+            <span>বর্তমানে কোনো ভিজিটর ভিতরে নেই।</span>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {currentlyInsideVisitors.map((v) => (
               <div 
                 key={v.id} 
-                className="bg-rose-50/40 border border-rose-200 rounded p-3 flex flex-col justify-between shadow-xs hover:border-rose-300 transition-colors"
+                className="bg-rose-50/40 border border-rose-200 rounded p-3 flex flex-col justify-between shadow-xs"
               >
                 <div>
                   <div className="flex justify-between items-start gap-1">
@@ -540,8 +677,10 @@ ${listLines.join('\n\n')}
                     <div className="text-xs text-stone-700 font-medium flex items-center gap-1 mt-1">
                       <User size={12} className="text-stone-400" />
                       <span>{v.visitor_name}</span>
-                      {v.phone_number && (
-                        <span className="text-[10px] text-stone-500 font-mono">({v.phone_number})</span>
+                      {v.total_persons && v.total_persons > 1 && (
+                        <span className="text-[10px] bg-amber-200 text-amber-950 px-1 rounded font-bold">
+                          (+{v.total_persons - 1} জন)
+                        </span>
                       )}
                     </div>
                   )}
@@ -555,24 +694,34 @@ ${listLines.join('\n\n')}
                       <span className="font-bold text-stone-500 text-[10px]">উদ্দেশ্য: </span>
                       <span className="text-stone-700">{v.purpose}</span>
                     </div>
-                    {v.id_card_no && (
-                      <div className="text-[10px] font-mono text-stone-500">
-                        পাস নং: {v.id_card_no}
-                      </div>
-                    )}
                   </div>
                 </div>
 
-                {/* 1-CLICK OUT BUTTON: Click and they vanish from this top section immediately */}
-                <div className="mt-3 pt-2 border-t border-rose-100 flex items-center justify-between gap-2">
-                  <span className="text-[10px] text-stone-500 font-mono">{v.date}</span>
+                {/* Status Update & Duplicate Buttons */}
+                <div className="mt-3 pt-2 border-t border-rose-100 flex items-center justify-between gap-1.5">
                   <button
-                    onClick={() => handleQuickCheckout(v)}
-                    className="flex-1 py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded shadow-xs flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer transition-transform"
-                    title="ক্লিক করলেই বর্তমান সময় বের হওয়ার সময় হিসেবে সেভ হবে এবং ড্যাশবোর্ড থেকে চলে যাবে"
+                    onClick={() => handleUpdateStatus(v, 'Not Permitted')}
+                    className="px-2 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-800 text-[10px] font-bold rounded flex items-center gap-1 cursor-pointer"
                   >
-                    <LogOut size={13} />
-                    <span>🚪 আউট দিন</span>
+                    <Ban size={12} className="text-red-600" />
+                    <span>NOT PERMITTED</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleDuplicateRecord(v)}
+                    className="px-2 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 text-[10px] font-bold rounded flex items-center gap-1 cursor-pointer"
+                  >
+                    <Copy size={12} />
+                    <span>ডুপ্লিকেট</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleOpenCheckoutModal(v)}
+                    className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black rounded flex items-center gap-1 cursor-pointer shadow-xs"
+                    title="আউট টাইম দিয়ে প্রস্থান নিশ্চিত করুন"
+                  >
+                    <LogOut size={12} />
+                    <span>আউট দিন</span>
                   </button>
                 </div>
               </div>
@@ -581,181 +730,375 @@ ${listLines.join('\n\n')}
         )}
       </div>
 
-      {/* =========================================================================
-          📱 SECTION 2: নতুন ভিজিটর এন্ট্রি ফরম (QUICK MOBILE ENTRY)
-          একদম সহজ ও পরিচ্ছন্ন - অতিরিক্ত কোনো বাটন নেই
-          ========================================================================= */}
-      <div className="bg-white border border-stone-300 rounded-md shadow-sm p-3.5 sm:p-5 mb-5">
-        <div className="flex justify-between items-center mb-3 pb-2 border-b border-stone-200">
-          <div className="flex items-center gap-2">
-            <Plus size={16} className="text-amber-600" />
-            <h3 className="text-xs sm:text-sm font-black uppercase tracking-wide text-stone-900">
-              নতুন ভিজিটর এন্ট্রি করুন (New Entry)
-            </h3>
+      <div className="bg-white border-2 border-amber-400 rounded-lg shadow-md p-4 sm:p-6 mb-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-3 border-b border-stone-200">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded bg-amber-100 text-amber-800 flex items-center justify-center font-black">
+              <Plus size={20} />
+            </div>
+            <div>
+              <h3 className="text-sm sm:text-base font-black uppercase tracking-wide text-stone-900">
+                নতুন ভিজিটর এন্ট্রি টেবিল ফরম (Table View - পৃথক ইন টাইম)
+              </h3>
+              <p className="text-[11px] text-stone-500">
+                প্রতিটি ভিজিটরের জন্য আলাদা ইন টাইম দিন এবং প্রয়োজনে (+) বাটন দিয়ে নতুন রো যোগ করুন।
+              </p>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setFormData({ ...formData, in_time: formatCurrentTime() })}
-            className="text-[11px] bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-300 px-2 py-0.5 rounded font-bold cursor-pointer"
-          >
-            ⏰ এখন সময় দিন
-          </button>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-bold text-stone-700">তারিখ:</label>
+            <input
+              type="date"
+              value={entryDate}
+              onChange={e => setEntryDate(e.target.value)}
+              className="bg-stone-50 border border-stone-300 rounded p-1.5 text-xs font-bold"
+            />
+          </div>
         </div>
 
-        <form onSubmit={handleSaveNewVisitor} className="space-y-3">
-          {/* Company & Visitor */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
-                কোম্পানির নাম (Company Name) *
-              </label>
-              <input
-                type="text"
-                value={formData.company_name}
-                onChange={e => setFormData({ ...formData, company_name: e.target.value })}
-                placeholder="e.g. ABC Fabrics Ltd."
-                required
-                className="w-full border-2 border-stone-300 focus:border-amber-500 p-2.5 rounded text-sm font-bold text-sky-950 outline-none"
-              />
-            </div>
+        <form onSubmit={handleSaveAllBatchEntries} className="space-y-4">
+          {/* Mobile View: Vertical Card Stack for Mobile Friendly Entry */}
+          <div className="block md:hidden space-y-4">
+            {batchRows.map((row, index) => (
+              <div key={index} className="bg-stone-50 border-2 border-stone-200 rounded-lg p-3.5 space-y-3 shadow-xs relative">
+                <div className="flex justify-between items-center pb-2 border-b border-stone-200">
+                  <span className="text-xs font-black text-amber-950 bg-amber-200 px-2.5 py-0.5 rounded-full">
+                    এন্ট্রি #{index + 1}
+                  </span>
+                  {batchRows.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveBatchRow(index)}
+                      className="text-red-600 bg-red-50 hover:bg-red-100 text-xs font-bold px-2 py-1 rounded border border-red-200 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 size={13} /> বাদ দিন
+                    </button>
+                  )}
+                </div>
 
-            <div>
-              <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
-                ভিজিটরের নাম ও মোবাইল
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <input
-                  type="text"
-                  value={formData.visitor_name}
-                  onChange={e => setFormData({ ...formData, visitor_name: e.target.value })}
-                  placeholder="নাম (ঐচ্ছিক)"
-                  className="w-full border border-stone-300 p-2.5 rounded text-sm outline-none"
-                />
-                <input
-                  type="text"
-                  value={formData.phone_number || ''}
-                  onChange={e => setFormData({ ...formData, phone_number: e.target.value })}
-                  placeholder="মোবাইল (ঐচ্ছিক)"
-                  className="w-full border border-stone-300 p-2.5 rounded text-sm font-mono outline-none"
-                />
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-800 uppercase mb-1">কোম্পানির নাম *</label>
+                  <input
+                    type="text"
+                    value={row.company_name || ''}
+                    onChange={e => {
+                      const updated = [...batchRows];
+                      updated[index].company_name = e.target.value;
+                      setBatchRows(updated);
+                    }}
+                    placeholder="কোম্পানি বা প্রতিষ্ঠানের নাম..."
+                    required
+                    className="w-full bg-white border border-stone-300 p-2.5 rounded text-xs font-bold text-sky-950 outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-2">
+                    <label className="block text-[11px] font-bold text-stone-800 uppercase mb-1">ভিজিটরের নাম</label>
+                    <input
+                      type="text"
+                      value={row.visitor_name || ''}
+                      onChange={e => {
+                        const updated = [...batchRows];
+                        updated[index].visitor_name = e.target.value;
+                        setBatchRows(updated);
+                      }}
+                      placeholder="নাম..."
+                      className="w-full bg-white border border-stone-300 p-2.5 rounded text-xs outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-800 uppercase mb-1">লোক সংখ্যা</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={row.total_persons || 1}
+                      onChange={e => {
+                        const updated = [...batchRows];
+                        updated[index].total_persons = parseInt(e.target.value, 10) || 1;
+                        setBatchRows(updated);
+                      }}
+                      className="w-full bg-white border border-stone-300 p-2.5 rounded text-xs font-mono font-bold text-center outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-800 uppercase mb-1">কার সাথে দেখা *</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={row.who_meet || ''}
+                      onChange={e => {
+                        const updated = [...batchRows];
+                        updated[index].who_meet = e.target.value;
+                        setBatchRows(updated);
+                      }}
+                      placeholder="অফিসারের নাম..."
+                      required
+                      className="flex-1 bg-white border border-stone-300 p-2.5 rounded text-xs font-bold text-amber-950 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setActiveRowIndexForStaff(index)}
+                      className="bg-stone-800 hover:bg-stone-900 text-white px-3 py-2 rounded text-xs font-bold cursor-pointer shrink-0 flex items-center gap-1"
+                    >
+                      <span>🔍 লিস্ট</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4. Purpose (উদ্দেশ্য) - বড় ঘর */}
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[11px] font-bold text-stone-800 uppercase">
+                      উদ্দেশ্য * <span className="text-[10px] text-amber-700 font-bold">(বড় ঘর)</span>
+                    </label>
+                    <span className="text-[10px] text-stone-400">বিস্তারিত লিখুন</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={row.purpose || ''}
+                    onChange={e => {
+                      const updated = [...batchRows];
+                      updated[index].purpose = e.target.value;
+                      setBatchRows(updated);
+                    }}
+                    placeholder="সাক্ষাতের বিস্তারিত উদ্দেশ্য লিখুন..."
+                    required
+                    className="w-full bg-white border-2 border-stone-300 focus:border-amber-500 p-3 rounded-md text-xs sm:text-sm font-medium outline-none shadow-xs"
+                  />
+                  {/* Quick Purpose Shortcut Pills */}
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {QUICK_PURPOSES.map(qp => (
+                      <button
+                        key={qp}
+                        type="button"
+                        onClick={() => {
+                          const updated = [...batchRows];
+                          updated[index].purpose = qp;
+                          setBatchRows(updated);
+                        }}
+                        className="text-[10px] bg-white border border-stone-300 hover:bg-amber-100 hover:border-amber-400 text-stone-700 px-2 py-1 rounded cursor-pointer font-medium transition-colors"
+                      >
+                        {qp}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 5. In Time */}
+                <div>
+                  <label className="block text-[11px] font-bold text-stone-800 uppercase mb-1">ইন টাইম *</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={row.in_time || ''}
+                      onChange={e => {
+                        const updated = [...batchRows];
+                        updated[index].in_time = e.target.value;
+                        setBatchRows(updated);
+                      }}
+                      placeholder="11:14 AM"
+                      required
+                      className="flex-1 bg-white border border-stone-300 p-2.5 rounded text-xs font-mono font-bold text-emerald-800 text-center outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = [...batchRows];
+                        updated[index].in_time = formatCurrentTime();
+                        setBatchRows(updated);
+                      }}
+                      className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-2 rounded text-xs font-bold cursor-pointer shrink-0"
+                      title="বর্তমান সময় বসান"
+                    >
+                      ⏰ এখন
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
+            ))}
           </div>
 
-          {/* Who Meet & Purpose */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
-                কার সাথে সাক্ষাৎ (Who Meet) *
-              </label>
-              <input
-                type="text"
-                list="staff-list"
-                value={formData.who_meet}
-                onChange={e => setFormData({ ...formData, who_meet: e.target.value })}
-                placeholder="কর্মকর্তার নাম লিখুন বা সিলেক্ট করুন..."
-                required
-                className="w-full border-2 border-stone-300 focus:border-amber-500 p-2.5 rounded text-sm font-bold text-amber-950 outline-none"
-              />
-              <datalist id="staff-list">
-                {employees.map(emp => (
-                  <option key={emp.id} value={`${emp.name} (${emp.designation || emp.id})`} />
+          {/* Desktop View: Table Layout */}
+          <div className="hidden md:block overflow-x-auto border border-stone-300 rounded-md shadow-xs">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-stone-900 text-white font-bold uppercase text-[10px] tracking-wider">
+                  <th className="p-2.5 text-center w-12">#</th>
+                  <th className="p-2.5">কোম্পানির নাম *</th>
+                  <th className="p-2.5">ভিজিটর নাম ও লোক</th>
+                  <th className="p-2.5">কার সাথে দেখা *</th>
+                  <th className="p-2.5 min-w-[260px]">উদ্দেশ্য * (বড় ঘর)</th>
+                  <th className="p-2.5 w-36">ইন টাইম (আলাদা) *</th>
+                  <th className="p-2.5 text-center w-16">অ্যাকশন</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-200 bg-white">
+                {batchRows.map((row, index) => (
+                  <tr key={index} className="hover:bg-amber-50/40 transition-colors">
+                    <td className="p-2.5 text-center font-bold text-stone-500 font-mono">
+                      {index + 1}
+                    </td>
+                    <td className="p-2.5">
+                      <input
+                        type="text"
+                        value={row.company_name || ''}
+                        onChange={e => {
+                          const updated = [...batchRows];
+                          updated[index].company_name = e.target.value;
+                          setBatchRows(updated);
+                        }}
+                        placeholder="কোম্পানি নাম..."
+                        required
+                        className="w-full bg-stone-50 border border-stone-300 p-2 rounded text-xs font-bold text-sky-950 outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </td>
+                    <td className="p-2.5">
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          value={row.visitor_name || ''}
+                          onChange={e => {
+                            const updated = [...batchRows];
+                            updated[index].visitor_name = e.target.value;
+                            setBatchRows(updated);
+                          }}
+                          placeholder="নাম"
+                          className="flex-1 bg-stone-50 border border-stone-300 p-2 rounded text-xs outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <input
+                          type="number"
+                          min="1"
+                          value={row.total_persons || 1}
+                          onChange={e => {
+                            const updated = [...batchRows];
+                            updated[index].total_persons = parseInt(e.target.value, 10) || 1;
+                            setBatchRows(updated);
+                          }}
+                          title="লোক সংখ্যা"
+                          className="w-14 bg-stone-50 border border-stone-300 p-2 rounded text-xs font-mono font-bold text-center outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                      </div>
+                    </td>
+                    <td className="p-2.5">
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          value={row.who_meet || ''}
+                          onChange={e => {
+                            const updated = [...batchRows];
+                            updated[index].who_meet = e.target.value;
+                            setBatchRows(updated);
+                          }}
+                          placeholder="কার সাথে দেখা..."
+                          required
+                          className="flex-1 bg-stone-50 border border-stone-300 p-2 rounded text-xs font-bold text-amber-950 outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setActiveRowIndexForStaff(index)}
+                          className="bg-stone-800 hover:bg-stone-900 text-white px-2.5 py-1.5 rounded text-[10px] font-bold cursor-pointer shrink-0"
+                          title="এমপ্লয়ী লিস্ট"
+                        >
+                          🔍 লিস্ট
+                        </button>
+                      </div>
+                    </td>
+                    <td className="p-2.5 min-w-[260px]">
+                      <input
+                        type="text"
+                        value={row.purpose || ''}
+                        onChange={e => {
+                          const updated = [...batchRows];
+                          updated[index].purpose = e.target.value;
+                          setBatchRows(updated);
+                        }}
+                        placeholder="সাক্ষাতের বিস্তারিত উদ্দেশ্য লিখুন..."
+                        required
+                        className="w-full bg-stone-50 border border-stone-300 p-2.5 rounded text-xs outline-none focus:ring-1 focus:ring-amber-500 font-medium"
+                      />
+                    </td>
+                    <td className="p-2.5">
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          value={row.in_time || ''}
+                          onChange={e => {
+                            const updated = [...batchRows];
+                            updated[index].in_time = e.target.value;
+                            setBatchRows(updated);
+                          }}
+                          placeholder="11:14 AM"
+                          required
+                          className="flex-1 bg-stone-50 border border-stone-300 p-2 rounded text-xs font-mono font-bold text-emerald-800 text-center outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = [...batchRows];
+                            updated[index].in_time = formatCurrentTime();
+                            setBatchRows(updated);
+                          }}
+                          className="bg-emerald-700 hover:bg-emerald-800 text-white px-2 py-1.5 rounded text-[10px] font-bold cursor-pointer shrink-0"
+                          title="বর্তমান সময় বসান"
+                        >
+                          ⏰
+                        </button>
+                      </div>
+                    </td>
+                    <td className="p-2.5 text-center">
+                      {batchRows.length > 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveBatchRow(index)}
+                          className="p-1.5 text-red-600 hover:bg-red-100 rounded cursor-pointer"
+                          title="রো ডিলিট করুন"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      ) : (
+                        <span className="text-stone-300">-</span>
+                      )}
+                    </td>
+                  </tr>
                 ))}
-              </datalist>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
-                উদ্দেশ্য (Purpose) *
-              </label>
-              <input
-                type="text"
-                value={formData.purpose}
-                onChange={e => setFormData({ ...formData, purpose: e.target.value })}
-                placeholder="ভিজিটের উদ্দেশ্য..."
-                required
-                className="w-full border-2 border-stone-300 focus:border-amber-500 p-2.5 rounded text-sm outline-none"
-              />
-            </div>
+              </tbody>
+            </table>
           </div>
 
-          {/* 1-Tap Purpose Chips */}
-          <div>
-            <span className="text-[10px] font-bold text-stone-400 uppercase block mb-1">
-              দ্রুত সিলেক্ট:
-            </span>
-            <div className="flex flex-wrap gap-1">
-              {QUICK_PURPOSES.map(p => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setFormData({ ...formData, purpose: p })}
-                  className={`text-[11px] px-2 py-0.5 rounded border cursor-pointer ${
-                    formData.purpose === p 
-                      ? 'bg-amber-500 text-stone-950 font-bold border-amber-600' 
-                      : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border-stone-300'
-                  }`}
-                >
-                  + {p}
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* Add More & Save Buttons */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+            <button
+              type="button"
+              onClick={handleAddBatchRow}
+              className="w-full sm:w-auto py-3 px-5 bg-stone-200 hover:bg-stone-300 text-stone-900 font-bold text-xs rounded-md shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+            >
+              <Plus size={18} className="text-amber-700" />
+              <span>+ আরেকটি রো যোগ করুন (Add Row)</span>
+            </button>
 
-          {/* In Time & Pass No */}
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            <div>
-              <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">
-                In Time *
-              </label>
-              <input
-                type="text"
-                value={formData.in_time}
-                onChange={e => setFormData({ ...formData, in_time: e.target.value })}
-                required
-                className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-emerald-800"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">
-                পাস নং / কার্ড নং
-              </label>
-              <input
-                type="text"
-                value={formData.id_card_no || ''}
-                onChange={e => setFormData({ ...formData, id_card_no: e.target.value })}
-                placeholder="V-01"
-                className="w-full border border-stone-300 p-2 rounded text-xs font-mono"
-              />
-            </div>
-          </div>
-
-          {/* JUST ONE CLEAN SUBMIT BUTTON */}
-          <div className="pt-2">
             <button
               type="submit"
-              className="w-full py-3 bg-stone-900 hover:bg-black active:scale-98 text-white font-black text-sm rounded shadow-sm flex items-center justify-center gap-2 cursor-pointer transition-transform"
+              className="w-full sm:w-auto py-3.5 px-10 bg-amber-500 hover:bg-amber-600 active:scale-98 text-stone-950 font-black text-sm rounded-md shadow-md flex items-center justify-center gap-2 cursor-pointer transition-transform"
             >
-              <CheckCircle2 size={18} className="text-amber-400" />
-              <span>ভিজিটর এন্ট্রি সেভ করুন</span>
+              <CheckCircle2 size={20} />
+              <span>সবগুলো এন্ট্রি একসাথে সেভ করুন ({batchRows.length} টি)</span>
             </button>
           </div>
         </form>
       </div>
 
       {/* =========================================================================
-          📋 SECTION 3: সমস্ত ভিজিটর লগ ও ইতিহাস (ALL VISITORS LOG)
+          📋 SECTION 3: ALL VISITORS LOG & HISTORY
           ========================================================================= */}
       <div className="bg-white border border-stone-300 rounded-md shadow-xs p-3.5 mb-6">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3 pb-2 border-b border-stone-200">
-          <div className="flex items-center gap-2">
-            <h4 className="text-xs font-black uppercase text-stone-900">
-              ভিজিটর তালিকা ({historyVisitors.length} টি রেকর্ড)
-            </h4>
-          </div>
+          <h4 className="text-xs font-black uppercase text-stone-900">
+            সকল ভিজিটর রেকর্ড ({historyVisitors.length} টি)
+          </h4>
 
-          {/* Date & Search */}
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <input
               type="date"
@@ -773,7 +1116,7 @@ ${listLines.join('\n\n')}
               onClick={() => setSelectedDate('')}
               className={`px-2 py-1 rounded text-xs font-bold cursor-pointer ${selectedDate === '' ? 'bg-amber-500 text-stone-900' : 'bg-stone-200 text-stone-700'}`}
             >
-              সব তারিখ
+              সব
             </button>
             <button
               onClick={exportToExcel}
@@ -784,41 +1127,43 @@ ${listLines.join('\n\n')}
           </div>
         </div>
 
-        {/* Search */}
         <div className="mb-3">
           <input
             type="text"
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            placeholder="নাম, কোম্পানি বা উদ্দেশ্য দিয়ে খুঁজুন..."
+            placeholder="কোম্পানি, নাম বা উদ্দেশ্য দিয়ে খুঁজুন..."
             className="w-full bg-stone-50 border border-stone-300 rounded p-2 text-xs outline-none"
           />
         </div>
 
-        {/* Clean, Scannable Visitor Cards */}
         <div className="space-y-2.5">
           {historyVisitors.map((v, idx) => {
-            const isInside = !v.out_time || v.status === 'Inside';
+            const statusLabel = 
+              v.status === 'Inside' ? 'ENTER PERMISSION 🔴' :
+              v.status === 'Not Permitted' ? 'NOT PERMITTED ❌' : 'VISIT COMPLETE 🟢';
+
             return (
               <div 
                 key={v.id || idx}
-                className={`p-3 rounded border flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
-                  isInside ? 'bg-amber-50/40 border-amber-300' : 'bg-white border-stone-200'
-                }`}
+                className="p-3 rounded border border-stone-200 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-xs"
               >
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-mono font-bold text-stone-500 text-xs">
                       #{v.sl || idx + 1}
                     </span>
                     <strong className="text-sky-950 text-sm">{v.company_name}</strong>
                     {v.visitor_name && (
-                      <span className="text-xs text-stone-600 font-medium">({v.visitor_name})</span>
+                      <span className="text-xs text-stone-700 font-bold">
+                        ({v.visitor_name} {v.total_persons && v.total_persons > 1 ? `+${v.total_persons - 1} জন` : ''})
+                      </span>
                     )}
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                      isInside ? 'bg-rose-100 text-rose-800' : 'bg-stone-100 text-stone-600'
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                      v.status === 'Inside' ? 'bg-rose-100 text-rose-900' :
+                      v.status === 'Not Permitted' ? 'bg-stone-200 text-stone-800' : 'bg-emerald-100 text-emerald-900'
                     }`}>
-                      {isInside ? 'ভিতরে আছেন' : 'প্রস্থান'}
+                      {statusLabel}
                     </span>
                   </div>
 
@@ -833,28 +1178,28 @@ ${listLines.join('\n\n')}
                 </div>
 
                 <div className="flex items-center gap-1.5 self-end sm:self-center">
-                  {isInside && (
-                    <button
-                      onClick={() => handleQuickCheckout(v)}
-                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black rounded cursor-pointer"
-                    >
-                      আউট দিন
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleDuplicateRecord(v)}
+                    className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-950 text-[11px] font-bold rounded flex items-center gap-1 cursor-pointer"
+                    title="ডুপ্লিকেট"
+                  >
+                    <Copy size={12} />
+                    <span>ডুপ্লিকেট</span>
+                  </button>
+
                   <button
                     onClick={() => {
                       setEditingRecord({ ...v });
                       setShowEditModal(true);
                     }}
                     className="p-1.5 text-stone-500 hover:bg-stone-200 rounded cursor-pointer"
-                    title="ইডিট"
                   >
                     <Edit2 size={14} />
                   </button>
+
                   <button
                     onClick={() => v.id && handleDelete(v.id)}
                     className="p-1.5 text-red-500 hover:bg-red-50 rounded cursor-pointer"
-                    title="ডিলিট"
                   >
                     <Trash2 size={14} />
                   </button>
@@ -872,8 +1217,7 @@ ${listLines.join('\n\n')}
       </div>
 
       {/* =========================================================================
-          🔥 SECTION 4: FOOTER A JUST EKTA BUTTON (ফুটার এ শুধু একটা বাটন)
-          চাপ দিলেই Today total visitor summary সবসময় আসবে এবং WhatsApp এ পাঠাবে!
+          🔥 SECTION 4: FOOTER WHATSAPP SUMMARY BUTTON
           ========================================================================= */}
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t-2 border-emerald-500 p-3 shadow-2xl">
         <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
@@ -886,7 +1230,6 @@ ${listLines.join('\n\n')}
             </div>
           </div>
 
-          {/* THE SINGLE BIG BUTTON REQUESTED BY USER */}
           <button
             onClick={handleSendTodayWhatsAppSummary}
             className="w-full sm:w-auto flex-1 py-3.5 px-6 bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-black text-sm md:text-base rounded-md shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-transform"
@@ -896,6 +1239,139 @@ ${listLines.join('\n\n')}
           </button>
         </div>
       </div>
+
+      {/* ================= MODAL: EMPLOYEE SELECTOR POPUP FOR 'WHO MEET' ================= */}
+      {activeRowIndexForStaff !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded shadow-2xl border border-stone-300 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="bg-stone-900 text-white px-4 py-3 flex justify-between items-center">
+              <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                <Users size={16} className="text-amber-400" />
+                কর্মকর্তা নির্বাচন করুন (Who Meet)
+              </h3>
+              <button onClick={() => setActiveRowIndexForStaff(null)} className="text-stone-400 hover:text-white cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 text-xs">
+              <input
+                type="text"
+                value={staffSearchQuery}
+                onChange={e => setStaffSearchQuery(e.target.value)}
+                placeholder="নাম বা পদবি দিয়ে খুঁজুন..."
+                className="w-full bg-stone-50 border border-stone-300 p-2 rounded outline-none"
+                autoFocus
+              />
+
+              <div className="max-h-64 overflow-y-auto divide-y divide-stone-100 border border-stone-200 rounded">
+                {employees
+                  .filter(emp => {
+                    const q = staffSearchQuery.toLowerCase();
+                    return !q || emp.name.toLowerCase().includes(q) || (emp.designation || '').toLowerCase().includes(q) || String(emp.id).includes(q);
+                  })
+                  .map(emp => {
+                    const empLabel = `${emp.name} (${emp.designation || emp.id})`;
+                    return (
+                      <div
+                        key={emp.id}
+                        onClick={() => {
+                          const updated = [...batchRows];
+                          updated[activeRowIndexForStaff].who_meet = empLabel;
+                          setBatchRows(updated);
+                          setActiveRowIndexForStaff(null);
+                          setStaffSearchQuery('');
+                        }}
+                        className="p-2.5 hover:bg-amber-50 cursor-pointer flex justify-between items-center"
+                      >
+                        <div>
+                          <div className="font-bold text-stone-900">{emp.name}</div>
+                          <div className="text-[10px] text-stone-500">ID: {emp.id} • {emp.designation || 'Staff'}</div>
+                        </div>
+                        <span className="text-[10px] bg-stone-200 text-stone-700 px-2 py-0.5 rounded font-bold">সিলেক্ট</span>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              <div className="flex justify-end pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setActiveRowIndexForStaff(null)}
+                  className="px-4 py-2 bg-stone-200 hover:bg-stone-300 font-bold rounded"
+                >
+                  বন্ধ করুন
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: CHECKOUT TIME POPUP (আউট টাইম পপআপ) ================= */}
+      {checkoutModalRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs">
+          <div className="bg-white rounded shadow-2xl border border-stone-300 w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="bg-rose-700 text-white px-4 py-3 flex justify-between items-center">
+              <h3 className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                <LogOut size={16} />
+                প্রস্থান নিশ্চিত করুন (Checkout)
+              </h3>
+              <button onClick={() => setCheckoutModalRecord(null)} className="text-rose-200 hover:text-white cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3.5 text-xs">
+              <div className="bg-stone-50 p-2.5 rounded border border-stone-200 space-y-1">
+                <div>🏢 <strong>কোম্পানি:</strong> {checkoutModalRecord.company_name}</div>
+                <div>👤 <strong>ভিজিটর:</strong> {checkoutModalRecord.visitor_name || 'Visitor'}</div>
+                <div>⏰ <strong>প্রবেশের সময় (In):</strong> {checkoutModalRecord.in_time}</div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-stone-800 uppercase mb-1">
+                  বের হওয়ার সময় (Out Time):
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={checkoutTimeInput}
+                    onChange={e => setCheckoutTimeInput(e.target.value)}
+                    required
+                    className="flex-1 border-2 border-rose-400 p-2 rounded text-sm font-mono font-bold text-rose-800 outline-none"
+                    placeholder="12:30 PM"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCheckoutTimeInput(formatCurrentTime())}
+                    className="px-3 bg-stone-200 hover:bg-stone-300 font-bold text-stone-800 rounded text-xs cursor-pointer"
+                  >
+                    এখন আউট দিন
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setCheckoutModalRecord(null)}
+                  className="px-4 py-2 border border-stone-300 rounded text-stone-600 font-bold hover:bg-stone-100 cursor-pointer"
+                >
+                  বাতিল
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmCheckout}
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded cursor-pointer shadow-sm"
+                >
+                  প্রস্থান কনফার্ম করুন
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ================= MODAL: EDIT VISITOR ================= */}
       {showEditModal && editingRecord && (
@@ -917,7 +1393,7 @@ ${listLines.join('\n\n')}
                   <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">কোম্পানির নাম *</label>
                   <input
                     type="text"
-                    value={editingRecord.company_name}
+                    value={editingRecord.company_name || ''}
                     onChange={e => setEditingRecord({ ...editingRecord, company_name: e.target.value })}
                     required
                     className="w-full border border-stone-300 p-2 rounded text-xs font-bold"
@@ -934,11 +1410,60 @@ ${listLines.join('\n\n')}
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">সাথে মোট লোক সংখ্যা</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={editingRecord.total_persons || 1}
+                    onChange={e => setEditingRecord({ ...editingRecord, total_persons: parseInt(e.target.value, 10) || 1 })}
+                    className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">স্ট্যাটাস</label>
+                  <select
+                    value={editingRecord.status || 'Inside'}
+                    onChange={(e: any) => setEditingRecord({ ...editingRecord, status: e.target.value })}
+                    className="w-full border border-stone-300 p-2 rounded text-xs font-bold"
+                  >
+                    <option value="Inside">ENTER PERMISSION</option>
+                    <option value="Not Permitted">NOT PERMITTED</option>
+                    <option value="Checked Out">VISIT COMPLETE</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* In Time & Out Time Editing */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">ইন টাইম (In Time)</label>
+                  <input
+                    type="text"
+                    value={editingRecord.in_time || ''}
+                    onChange={e => setEditingRecord({ ...editingRecord, in_time: e.target.value })}
+                    placeholder="11:14 AM"
+                    className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-emerald-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">আউট টাইম (Out Time)</label>
+                  <input
+                    type="text"
+                    value={editingRecord.out_time || ''}
+                    onChange={e => setEditingRecord({ ...editingRecord, out_time: e.target.value })}
+                    placeholder="02:30 PM"
+                    className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-rose-800"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">কার সাথে দেখা *</label>
                 <input
                   type="text"
-                  value={editingRecord.who_meet}
+                  value={editingRecord.who_meet || ''}
                   onChange={e => setEditingRecord({ ...editingRecord, who_meet: e.target.value })}
                   required
                   className="w-full border border-stone-300 p-2 rounded text-xs font-bold text-amber-950"
@@ -949,34 +1474,11 @@ ${listLines.join('\n\n')}
                 <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">উদ্দেশ্য *</label>
                 <input
                   type="text"
-                  value={editingRecord.purpose}
+                  value={editingRecord.purpose || ''}
                   onChange={e => setEditingRecord({ ...editingRecord, purpose: e.target.value })}
                   required
                   className="w-full border border-stone-300 p-2 rounded text-xs"
                 />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">In Time</label>
-                  <input
-                    type="text"
-                    value={editingRecord.in_time}
-                    onChange={e => setEditingRecord({ ...editingRecord, in_time: e.target.value })}
-                    required
-                    className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-emerald-800"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">Out Time</label>
-                  <input
-                    type="text"
-                    value={editingRecord.out_time || ''}
-                    onChange={e => setEditingRecord({ ...editingRecord, out_time: e.target.value })}
-                    placeholder="বের হওয়ার সময়"
-                    className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold text-rose-800"
-                  />
-                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-stone-200">
@@ -999,7 +1501,7 @@ ${listLines.join('\n\n')}
         </div>
       )}
 
-      {/* ================= MODAL: SETTINGS (ONLY WHATSAPP) ================= */}
+      {/* ================= MODAL: SETTINGS (WHATSAPP) ================= */}
       {showSettingsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs">
           <div className="bg-white rounded shadow-2xl border border-stone-300 w-full max-w-md overflow-hidden">
@@ -1024,9 +1526,6 @@ ${listLines.join('\n\n')}
                 <label className="block text-[11px] font-bold text-stone-900 mb-1">
                   এডমিনের WhatsApp মোবাইল নম্বর:
                 </label>
-                <p className="text-[10px] text-stone-500 mb-1.5">
-                  যে নম্বরে দিন শেষের একীভূত রিপোর্ট যাবে (যেমন: 01711000000)
-                </p>
                 <input
                   type="text"
                   value={adminWhatsAppNumber}
@@ -1045,7 +1544,7 @@ ${listLines.join('\n\n')}
                   type="text"
                   value={operatorIdentity}
                   onChange={e => setOperatorIdentity(e.target.value)}
-                  placeholder="Gate 1 Security"
+                  placeholder="Gate Security"
                   className="w-full border border-stone-300 p-2 rounded text-xs outline-none"
                 />
               </div>

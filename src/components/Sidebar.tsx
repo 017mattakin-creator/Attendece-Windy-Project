@@ -50,7 +50,7 @@ export default function Sidebar({ activeSection, setActiveSection, viewMode, isO
             </button>
             {item.hasExternal && (
               <a
-                href="/visitors"
+                href="/#visitors"
                 target="_blank"
                 rel="noopener noreferrer"
                 title="আলাদা পেজে লিংক খুলুন"
@@ -71,13 +71,13 @@ export default function Sidebar({ activeSection, setActiveSection, viewMode, isO
             <UserCheck size={12} /> আলাদা গেট লিংক:
           </div>
           <a
-            href="/visitors"
+            href="/#visitors"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-between bg-stone-800/80 hover:bg-stone-800 text-stone-200 hover:text-amber-300 p-2 rounded font-mono text-[10px] border border-stone-700 transition-colors"
             title="সিকিউরিটিকে দেওয়ার জন্য আলাদা লিংক"
           >
-            <span>/visitors</span>
+            <span>/#visitors</span>
             <ExternalLink size={11} className="text-amber-400" />
           </a>
         </div>

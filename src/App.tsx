@@ -832,7 +832,7 @@ export default function App() {
   };
 
   if (isVisitorStandalone) {
-    const directVisitorUrl = typeof window !== 'undefined' ? `${window.location.origin}/visitors` : '/visitors';
+    const directVisitorUrl = typeof window !== 'undefined' ? `${window.location.origin}/#visitors` : '/#visitors';
     return (
       <div className="bg-stone-100 min-h-screen text-stone-900 font-sans">
         {/* Dedicated Gate Visitor Header */}
