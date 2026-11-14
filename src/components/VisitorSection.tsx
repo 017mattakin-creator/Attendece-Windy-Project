@@ -24,13 +24,23 @@ import {
   Users,
   ShieldCheck,
   Ban,
-  ChevronDown
+  ChevronDown,
+  Camera,
+  Share2,
+  Download,
+  Image as ImageIcon
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabaseClient';
 import { normalizeToYYYYMMDD } from '../lib/dateUtils';
+import { 
+  renderVisitorReportCanvas, 
+  downloadCanvasAsPng, 
+  copyCanvasToClipboard, 
+  shareCanvasImage 
+} from '../lib/visitorImageReport';
 
 export interface VisitorRecord {
   id?: string | number;
@@ -80,6 +90,15 @@ const formatCurrentTime = (): string => {
 
 const getTodayString = (): string => {
   const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const getTomorrowString = (): string => {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -155,6 +174,15 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
 
   const [editingRecord, setEditingRecord] = useState<VisitorRecord | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  // Image Report (Excel-style PNG screenshot) State
+  const [showImageReportModal, setShowImageReportModal] = useState(false);
+  const [imageReportTitle, setImageReportTitle] = useState('Tommorow Site Visitor Plan');
+  const [imageReportDate, setImageReportDate] = useState<string>(getTodayString());
+  const [imageReportStatusStyle, setImageReportStatusStyle] = useState<'need_permission' | 'standard'>('need_permission');
+  const [imageReportDataUrl, setImageReportDataUrl] = useState<string | null>(null);
+  const [imageReportCanvas, setImageReportCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [copiedImageSuccess, setCopiedImageSuccess] = useState(false);
 
   useEffect(() => {
     fetchVisitors();
@@ -506,9 +534,10 @@ export default function VisitorSection({ employees = [], viewMode }: Props) {
         v.status === 'Inside' ? 'ENTER PERMISSION' :
         v.status === 'Not Permitted' ? 'NOT PERMITTED' : 'VISIT COMPLETE';
 
+      const phoneLine = v.phone_number ? `\n📞 ফোন: ${v.phone_number}` : '';
       return (
 `${i + 1}. COMPANY NAME : ${v.company_name}
-${nameStr}
+${nameStr}${phoneLine}
 সাক্ষাৎ: ${v.who_meet}
  ইন: ${v.in_time} | ${statusText}
  উদ্দেশ্য: ${v.purpose}
@@ -573,6 +602,94 @@ ${listLines.join('\n\n')}
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Visitors');
     XLSX.writeFile(wb, `Visitors_${selectedDate || 'All'}.xlsx`);
+  };
+
+  // Open image report modal with optional initial date and title
+  const handleOpenImageReport = (initialDate?: string, initialTitle?: string) => {
+    const targetDate = initialDate !== undefined ? initialDate : (selectedDate || getTodayString());
+    setImageReportDate(targetDate);
+    if (initialTitle) {
+      setImageReportTitle(initialTitle);
+    } else if (targetDate === getTomorrowString()) {
+      setImageReportTitle('Tommorow Site Visitor Plan');
+    } else if (targetDate === getTodayString()) {
+      setImageReportTitle('Today Site Visitor Report');
+    } else {
+      setImageReportTitle('Tommorow Site Visitor Plan');
+    }
+    setShowImageReportModal(true);
+  };
+
+  // Re-render canvas whenever modal is open and configuration changes
+  useEffect(() => {
+    if (!showImageReportModal) return;
+
+    const filtered = visitors.filter(v => {
+      if (!imageReportDate) return true;
+      return v.date === imageReportDate;
+    });
+
+    const sorted = [...filtered].sort((a, b) => (Number(a.sl) || 0) - (Number(b.sl) || 0));
+
+    const rows = sorted.map((v, i) => ({
+      sl: v.sl || i + 1,
+      date: v.date,
+      company_name: v.company_name,
+      visitor_name: v.visitor_name || '',
+      phone_number: v.phone_number || '',
+      who_meet: v.who_meet,
+      purpose: v.purpose,
+      in_time: v.in_time,
+      out_time: v.out_time || '',
+      total_persons: v.total_persons || 1,
+      status: v.status
+    }));
+
+    try {
+      const canvas = renderVisitorReportCanvas(rows, {
+        title: imageReportTitle,
+        date: imageReportDate,
+        statusStyle: imageReportStatusStyle
+      });
+      setImageReportCanvas(canvas);
+      setImageReportDataUrl(canvas.toDataURL('image/png'));
+    } catch (err) {
+      console.error('Error creating visitor report image:', err);
+    }
+  }, [showImageReportModal, imageReportTitle, imageReportDate, imageReportStatusStyle, visitors]);
+
+  const handleDownloadImageReport = () => {
+    if (!imageReportCanvas) return;
+    const cleanTitle = imageReportTitle.replace(/[^a-zA-Z0-9_\u0980-\u09FF]/g, '_');
+    const filename = `${cleanTitle}_${imageReportDate || 'All'}.png`;
+    downloadCanvasAsPng(imageReportCanvas, filename);
+  };
+
+  const handleCopyImageReport = async () => {
+    if (!imageReportCanvas) return;
+    const ok = await copyCanvasToClipboard(imageReportCanvas);
+    if (ok) {
+      setCopiedImageSuccess(true);
+      setTimeout(() => setCopiedImageSuccess(false), 2500);
+    } else {
+      alert('ছবি সরাসরি ক্লিপবোর্ডে কপি করা যায়নি। অনুগ্রহ করে "ইমেজ ডাউনলোড" বাটন ব্যবহার করুন।');
+    }
+  };
+
+  const handleShareImageReport = async () => {
+    if (!imageReportCanvas) return;
+    const cleanTitle = imageReportTitle.replace(/[^a-zA-Z0-9_\u0980-\u09FF]/g, '_');
+    const filename = `${cleanTitle}_${imageReportDate || 'All'}.png`;
+    const ok = await shareCanvasImage(imageReportCanvas, filename, imageReportTitle);
+    if (!ok) {
+      await handleCopyImageReport();
+      const cleanPhone = formatWhatsAppPhone(adminWhatsAppNumber);
+      const waUrl = cleanPhone 
+        ? `https://api.whatsapp.com/send?phone=${cleanPhone}`
+        : `https://api.whatsapp.com/send`;
+      alert('ছবিটি কপি করা হয়েছে! WhatsApp ওপেন হওয়ার পর চ্যাটে Paste (Ctrl+V বা Long Press -> Paste) করে পাঠিয়ে দিন।');
+      window.open(waUrl, '_blank');
+    }
   };
 
   return (
@@ -673,13 +790,23 @@ ${listLines.join('\n\n')}
                     </span>
                   </div>
 
-                  {v.visitor_name && (
-                    <div className="text-xs text-stone-700 font-medium flex items-center gap-1 mt-1">
-                      <User size={12} className="text-stone-400" />
-                      <span>{v.visitor_name}</span>
-                      {v.total_persons && v.total_persons > 1 && (
-                        <span className="text-[10px] bg-amber-200 text-amber-950 px-1 rounded font-bold">
-                          (+{v.total_persons - 1} জন)
+                  {(v.visitor_name || v.phone_number) && (
+                    <div className="text-xs text-stone-700 font-medium flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1">
+                      {v.visitor_name && (
+                        <span className="flex items-center gap-1">
+                          <User size={12} className="text-stone-400" />
+                          <span>{v.visitor_name}</span>
+                          {v.total_persons && v.total_persons > 1 && (
+                            <span className="text-[10px] bg-amber-200 text-amber-950 px-1 rounded font-bold">
+                              (+{v.total_persons - 1} জন)
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      {v.phone_number && (
+                        <span className="flex items-center gap-1 text-[11px] font-mono text-sky-800 font-semibold">
+                          <Phone size={11} className="text-sky-600" />
+                          {v.phone_number}
                         </span>
                       )}
                     </div>
@@ -824,6 +951,21 @@ ${listLines.join('\n\n')}
                 </div>
 
                 <div>
+                  <label className="block text-[11px] font-bold text-stone-800 uppercase mb-1">ফোন নাম্বার (Phone)</label>
+                  <input
+                    type="tel"
+                    value={row.phone_number || ''}
+                    onChange={e => {
+                      const updated = [...batchRows];
+                      updated[index].phone_number = e.target.value;
+                      setBatchRows(updated);
+                    }}
+                    placeholder="017xxxxxxxx"
+                    className="w-full bg-white border border-stone-300 p-2.5 rounded text-xs font-mono font-bold text-stone-900 outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
                   <label className="block text-[11px] font-bold text-stone-800 uppercase mb-1">কার সাথে দেখা *</label>
                   <div className="flex gap-1.5">
                     <input
@@ -926,13 +1068,14 @@ ${listLines.join('\n\n')}
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-stone-900 text-white font-bold uppercase text-[10px] tracking-wider">
-                  <th className="p-2.5 text-center w-12">#</th>
+                  <th className="p-2.5 text-center w-10">#</th>
                   <th className="p-2.5">কোম্পানির নাম *</th>
                   <th className="p-2.5">ভিজিটর নাম ও লোক</th>
+                  <th className="p-2.5 w-32">ফোন নাম্বার</th>
                   <th className="p-2.5">কার সাথে দেখা *</th>
-                  <th className="p-2.5 min-w-[260px]">উদ্দেশ্য * (বড় ঘর)</th>
+                  <th className="p-2.5 min-w-[240px]">উদ্দেশ্য * (বড় ঘর)</th>
                   <th className="p-2.5 w-36">ইন টাইম (আলাদা) *</th>
-                  <th className="p-2.5 text-center w-16">অ্যাকশন</th>
+                  <th className="p-2.5 text-center w-14">অ্যাকশন</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-200 bg-white">
@@ -981,6 +1124,19 @@ ${listLines.join('\n\n')}
                           className="w-14 bg-stone-50 border border-stone-300 p-2 rounded text-xs font-mono font-bold text-center outline-none focus:ring-1 focus:ring-amber-500"
                         />
                       </div>
+                    </td>
+                    <td className="p-2.5">
+                      <input
+                        type="tel"
+                        value={row.phone_number || ''}
+                        onChange={e => {
+                          const updated = [...batchRows];
+                          updated[index].phone_number = e.target.value;
+                          setBatchRows(updated);
+                        }}
+                        placeholder="017xxxxxxxx"
+                        className="w-full bg-stone-50 border border-stone-300 p-2 rounded text-xs font-mono font-bold text-stone-900 outline-none focus:ring-1 focus:ring-amber-500"
+                      />
                     </td>
                     <td className="p-2.5">
                       <div className="flex gap-1">
@@ -1113,6 +1269,13 @@ ${listLines.join('\n\n')}
               আজ
             </button>
             <button
+              onClick={() => setSelectedDate(getTomorrowString())}
+              className={`px-2 py-1 rounded text-xs font-bold cursor-pointer ${selectedDate === getTomorrowString() ? 'bg-amber-500 text-stone-900' : 'bg-stone-200 text-stone-700'}`}
+              title="আগামীকালের ভিজিটর প্ল্যান"
+            >
+              কাল
+            </button>
+            <button
               onClick={() => setSelectedDate('')}
               className={`px-2 py-1 rounded text-xs font-bold cursor-pointer ${selectedDate === '' ? 'bg-amber-500 text-stone-900' : 'bg-stone-200 text-stone-700'}`}
             >
@@ -1120,9 +1283,18 @@ ${listLines.join('\n\n')}
             </button>
             <button
               onClick={exportToExcel}
-              className="px-2 py-1 bg-[#107c41] text-white rounded text-xs font-bold flex items-center gap-1 cursor-pointer"
+              className="px-2 py-1 bg-[#107c41] hover:bg-[#0b5b2f] text-white rounded text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+              title="Excel (.xlsx) ফাইল ডাউনলোড করুন"
             >
               <FileSpreadsheet size={12} /> Excel
+            </button>
+            <button
+              onClick={() => handleOpenImageReport(selectedDate || getTodayString())}
+              className="px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-stone-950 rounded text-xs font-bold flex items-center gap-1 cursor-pointer shadow-xs transition-colors"
+              title="এক্সেল স্টাইল ছবি রিপোর্ট (PNG) তৈরি ও ডাউনলোড করুন"
+            >
+              <Camera size={13} className="text-stone-950" />
+              <span>📸 ইমেজ রিপোর্ট (ছবি)</span>
             </button>
           </div>
         </div>
@@ -1168,6 +1340,12 @@ ${listLines.join('\n\n')}
                   </div>
 
                   <div className="text-xs text-stone-600 mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    {v.phone_number && (
+                      <span className="font-mono text-sky-800 font-semibold flex items-center gap-1">
+                        <Phone size={11} className="text-sky-600" />
+                        {v.phone_number}
+                      </span>
+                    )}
                     <span>সাক্ষাৎ: <strong className="text-amber-950">{v.who_meet}</strong></span>
                     <span>উদ্দেশ্য: {v.purpose}</span>
                     <span className="font-mono text-emerald-800 font-bold">ইন: {v.in_time}</span>
@@ -1230,13 +1408,25 @@ ${listLines.join('\n\n')}
             </div>
           </div>
 
-          <button
-            onClick={handleSendTodayWhatsAppSummary}
-            className="w-full sm:w-auto flex-1 py-3.5 px-6 bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-black text-sm md:text-base rounded-md shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-transform"
-          >
-            <MessageCircle size={22} className="shrink-0" />
-            <span>আজকের সম্পূর্ণ ভিজিটর রিপোর্ট WhatsApp এ পাঠান</span>
-          </button>
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full sm:w-auto flex-1">
+            <button
+              onClick={() => handleOpenImageReport(getTomorrowString(), 'Tommorow Site Visitor Plan')}
+              className="flex-1 sm:flex-initial py-3 px-4 bg-amber-400 hover:bg-amber-300 active:scale-98 text-stone-950 font-black text-xs sm:text-sm rounded-md shadow-md flex items-center justify-center gap-2 cursor-pointer transition-transform border border-amber-500"
+              title="Tommorow Site Visitor Plan বা আজকের এক্সেল স্টাইল ছবি রিপোর্ট তৈরি করুন"
+            >
+              <Camera size={18} className="shrink-0 text-stone-900" />
+              <span>📸 ইমেজ রিপোর্ট (Excel ছবি)</span>
+            </button>
+
+            <button
+              onClick={handleSendTodayWhatsAppSummary}
+              className="flex-1 sm:flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-black text-xs sm:text-sm rounded-md shadow-md flex items-center justify-center gap-2 cursor-pointer transition-transform"
+              title="আজকের সম্পূর্ণ ভিজিটর রিপোর্ট WhatsApp টেক্সট আকারে পাঠান"
+            >
+              <MessageCircle size={18} className="shrink-0" />
+              <span>💬 টেক্সট সামারি WhatsApp</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1410,9 +1600,19 @@ ${listLines.join('\n\n')}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">সাথে মোট লোক সংখ্যা</label>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">ফোন নাম্বার</label>
+                  <input
+                    type="tel"
+                    value={editingRecord.phone_number || ''}
+                    onChange={e => setEditingRecord({ ...editingRecord, phone_number: e.target.value })}
+                    placeholder="017xxxxxxxx"
+                    className="w-full border border-stone-300 p-2 rounded text-xs font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-700 uppercase mb-1">মোট লোক সংখ্যা</label>
                   <input
                     type="number"
                     min="1"
@@ -1566,6 +1766,197 @@ ${listLines.join('\n\n')}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* ================= MODAL: EXCEL-STYLE IMAGE REPORT PREVIEW & EXPORT ================= */}
+      {showImageReportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-2xl border border-stone-300 w-full max-w-5xl my-auto overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="bg-stone-900 text-white px-4 py-3 flex justify-between items-center shrink-0 border-b border-stone-700">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-amber-400 text-stone-950 rounded font-black text-xs">EXCEL</span>
+                <div>
+                  <h3 className="text-sm font-black text-amber-300 flex items-center gap-1.5">
+                    <Camera size={16} />
+                    এক্সেল স্টাইল ইমেজ রিপোর্ট (Photo Report)
+                  </h3>
+                  <p className="text-[11px] text-stone-400">
+                    WhatsApp ও গ্রুপে স্ক্রিনশটের মতো ঝকঝকে ছবি পাঠাতে পারবেন
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowImageReportModal(false)}
+                className="text-stone-400 hover:text-white p-1 rounded-md hover:bg-stone-800 cursor-pointer transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Controls Bar */}
+            <div className="p-3 bg-stone-50 border-b border-stone-200 text-xs space-y-2.5 shrink-0">
+              {/* Row 1: Title and presets */}
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <label className="font-bold text-stone-700 shrink-0 w-20 text-[11px]">
+                  রিপোর্ট শিরোনাম:
+                </label>
+                <input
+                  type="text"
+                  value={imageReportTitle}
+                  onChange={e => setImageReportTitle(e.target.value)}
+                  placeholder="Tommorow Site Visitor Plan"
+                  className="flex-1 bg-white border border-stone-300 rounded px-2.5 py-1 text-xs font-bold text-stone-900 outline-none focus:border-amber-500"
+                />
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImageReportTitle('Tommorow Site Visitor Plan');
+                      setImageReportDate(getTomorrowString());
+                    }}
+                    className="px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold rounded text-[11px] border border-amber-300 cursor-pointer"
+                  >
+                    Tommorow Site Visitor Plan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImageReportTitle('Today Site Visitor Report');
+                      setImageReportDate(getTodayString());
+                    }}
+                    className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 font-bold rounded text-[11px] cursor-pointer"
+                  >
+                    Today Site Visitor Report
+                  </button>
+                </div>
+              </div>
+
+              {/* Row 2: Date and Status format */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-stone-200">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="font-bold text-stone-700 text-[11px]">তারিখ:</label>
+                  <input
+                    type="date"
+                    value={imageReportDate}
+                    onChange={e => setImageReportDate(e.target.value)}
+                    className="bg-white border border-stone-300 rounded px-2 py-0.5 text-xs font-semibold"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setImageReportDate(getTomorrowString())}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${imageReportDate === getTomorrowString() ? 'bg-amber-500 text-stone-950' : 'bg-stone-200 text-stone-700'}`}
+                  >
+                    কাল ({getTomorrowString()})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setImageReportDate(getTodayString())}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${imageReportDate === getTodayString() ? 'bg-amber-500 text-stone-950' : 'bg-stone-200 text-stone-700'}`}
+                  >
+                    আজ ({getTodayString()})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setImageReportDate('')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold cursor-pointer ${imageReportDate === '' ? 'bg-amber-500 text-stone-950' : 'bg-stone-200 text-stone-700'}`}
+                  >
+                    সব রেকর্ড
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-stone-600 text-[11px]">স্ট্যাটাস স্টাইল:</span>
+                  <button
+                    type="button"
+                    onClick={() => setImageReportStatusStyle('need_permission')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold border cursor-pointer ${imageReportStatusStyle === 'need_permission' ? 'bg-amber-300 text-stone-950 border-amber-500' : 'bg-white text-stone-600 border-stone-300'}`}
+                    title="Exact format from user screenshot"
+                  >
+                    need your permition
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setImageReportStatusStyle('standard')}
+                    className={`px-2 py-0.5 rounded text-[11px] font-bold border cursor-pointer ${imageReportStatusStyle === 'standard' ? 'bg-amber-300 text-stone-950 border-amber-500' : 'bg-white text-stone-600 border-stone-300'}`}
+                  >
+                    ENTER PERMISSION
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Preview Image Area */}
+            <div className="flex-1 overflow-auto p-4 bg-stone-200/80 flex flex-col items-center justify-start min-h-[280px]">
+              {imageReportDataUrl ? (
+                <div className="w-full flex flex-col items-center">
+                  <div className="text-[11px] text-stone-600 font-bold mb-2 flex items-center justify-between w-full max-w-4xl px-1">
+                    <span>🔍 প্রিভিউ (ছবিটি আসল Excel তালিকার মতো হলুদ হেডার ও বর্ডার সহ তৈরি হয়েছে):</span>
+                    <span>ডান/বামে স্ক্রল করে পুরোটা দেখুন &rarr;</span>
+                  </div>
+                  <div className="overflow-auto max-w-full rounded border-2 border-stone-400 bg-white shadow-xl p-1">
+                    <img
+                      src={imageReportDataUrl}
+                      alt="Visitor Report Plan"
+                      className="max-w-none block h-auto select-all"
+                      style={{ minWidth: '750px', maxWidth: '100%' }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="m-auto text-center py-12 text-stone-500 font-bold">
+                  ছবি তৈরি হচ্ছে... অনুগ্রহ করে অপেক্ষা করুন।
+                </div>
+              )}
+            </div>
+
+            {/* Action Footer */}
+            <div className="p-3 bg-white border-t border-stone-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="text-[11px] text-stone-500 font-medium">
+                উচ্চ রেজ্যুলেশন (2x Retina High-DPI PNG)
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setShowImageReportModal(false)}
+                  className="px-3 py-2 border border-stone-300 hover:bg-stone-100 text-stone-700 font-bold rounded text-xs cursor-pointer"
+                >
+                  বন্ধ করুন
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCopyImageReport}
+                  className={`px-4 py-2 font-black rounded text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors ${copiedImageSuccess ? 'bg-emerald-600 text-white' : 'bg-stone-800 hover:bg-stone-900 text-white'}`}
+                  title="ক্লিপবোর্ডে ছবি কপি করুন, তারপর WhatsApp বা মেসেঞ্জারে সরাসরি পেস্ট (Ctrl+V) করুন"
+                >
+                  {copiedImageSuccess ? <Check size={14} /> : <Copy size={14} />}
+                  <span>{copiedImageSuccess ? '✓ ছবি কপি হয়েছে!' : '📋 ছবি কপি করুন (Copy)'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleShareImageReport}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                  title="মোবাইলে সরাসরি WhatsApp বা অন্যান্য অ্যাপে ফাইল শেয়ার করুন"
+                >
+                  <Share2 size={14} />
+                  <span>📱 WhatsApp এ শেয়ার</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadImageReport}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black rounded text-xs flex items-center gap-1.5 cursor-pointer shadow-md transition-colors"
+                  title="PNG ছবি হিসেবে কম্পিউটারে বা ফোনে সেভ করুন"
+                >
+                  <Download size={14} />
+                  <span>📥 ইমেজ ডাউনলোড (PNG)</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
